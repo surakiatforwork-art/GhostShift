@@ -9,9 +9,19 @@ import com.phantom.ghostshift.ui.theme.GhostShiftTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val appContainer = (application as GhostShiftApp).container
+        
         setContent {
             GhostShiftTheme {
-                Text(text = "GhostShift (Loading...)")
+                // Manual DI for ViewModel
+                val factory = com.phantom.ghostshift.ui.MainViewModelFactory(
+                    repo = appContainer.photoRepository,
+                    prefs = appContainer.userPreferences,
+                    alarmScheduler = com.phantom.ghostshift.system.AlarmScheduler(this)
+                )
+                val viewModel: com.phantom.ghostshift.ui.MainViewModel = androidx.lifecycle.viewmodel.compose.viewModel(factory = factory)
+                
+                com.phantom.ghostshift.ui.MainScreen(viewModel)
             }
         }
     }
