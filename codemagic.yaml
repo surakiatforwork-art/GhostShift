@@ -3,9 +3,10 @@ workflows:
     name: Android Release
     max_build_duration: 30
     instance_type: mac_mini_m1
+    # environment:
+    #   android_signing:
+    #     - keystore_reference
     environment:
-      android_signing:
-        - keystore_reference
       groups:
         - google_play # If publishing to Play Store
       vars:
