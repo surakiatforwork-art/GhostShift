@@ -14,7 +14,12 @@ workflows:
     scripts:
       - name: Set up local.properties
         script: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ -z "$SDK_ROOT" ]; then
+            echo "ANDROID_SDK_ROOT or ANDROID_HOME must be set." >&2
+            exit 1
+          fi
+          echo "sdk.dir=$SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
       - name: Build Android Release APK
         script: |
           gradle assembleRelease
