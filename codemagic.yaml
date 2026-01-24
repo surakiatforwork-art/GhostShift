@@ -1,0 +1,38 @@
+workflows:
+  android-release:
+    name: Android Release
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      android_signing:
+        - keystore_reference
+      groups:
+        - google_play # If publishing to Play Store
+      vars:
+        PACKAGE_NAME: "com.phantom.ghostshift"
+    scripts:
+      - name: Set up local.properties
+        script: |
+          echo "flutter.sdk=$HOME/programs/flutter" > "$CM_BUILD_DIR/local.properties"
+      - name: Build Android Release APK
+        script: |
+          cd android || cd . # Adjust if project root is different
+          ./gradlew assembleRelease
+    artifacts:
+      - app/build/outputs/apk/release/*.apk
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify: success
+
+  android-debug:
+    name: Android Debug
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    scripts:
+      - name: Build Android Debug APK
+        script: |
+          ./gradlew assembleDebug
+    artifacts:
+      - app/build/outputs/apk/debug/*.apk
