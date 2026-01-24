@@ -79,13 +79,13 @@ object ScheduleCalculator {
                 
                 if (diff > 0) {
                     if (gapsMs[i] < maxMs) {
-                        gapsMs[i] += 1
+                        gapsMs[i] = gapsMs[i] + 1
                         diff -= 1
                         moved = true
                     }
                 } else {
                     if (gapsMs[i] > minMs) {
-                        gapsMs[i] -= 1
+                        gapsMs[i] = gapsMs[i] - 1
                         diff += 1
                         moved = true
                     }
