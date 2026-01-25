@@ -296,16 +296,20 @@ class MainViewModel(
                     // Safer: re-read directly (suspend) if you have a Flow-first utility; leaving as current snapshot is ok if timerState is StateFlow in prefs.
                     // If your prefs.timerState is Flow, consider using .first() here.
 
-                    // Strict trigger: first-time export of OUT-20
-                    if (photo.tag == "OUT-20") {
-                        // Unlock whether running or not? Spec in your comment: unlock affects timer lock.
-                        // If timer is running+locked => unlock immediately.
-                        if (currentTimer.running && currentTimer.locked) {
-                            prefs.saveTimerState(currentTimer.copy(locked = false))
-                        }
+                    // Unlock whenever we reach 20 pairs, regardless of which one was last
+                    if (currentTimer.running && currentTimer.locked) {
+                        prefs.saveTimerState(currentTimer.copy(locked = false))
                     }
                 }
             }
+        }
+    }
+
+    fun exportNextPhoto() {
+        // We assume pendingPhotos is already sorted by slot in the UiState because coreState sorts them
+        val next = coreState.value.pendingPhotos.firstOrNull()
+        if (next != null) {
+            exportPhoto(next)
         }
     }
 

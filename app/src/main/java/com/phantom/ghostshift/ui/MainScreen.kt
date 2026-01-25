@@ -1,282 +1,484 @@
 package com.phantom.ghostshift.ui
 
-import android.Manifest
-import android.os.Build
-import android.widget.Toast
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.rememberAsyncImagePainter
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.phantom.ghostshift.data.PhotoEntity
 import com.phantom.ghostshift.ui.theme.*
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.max
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import java.io.File
 
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    
-    // Pickers
-    val addPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri -> if (uri != null) viewModel.addPhotoFromPicker(uri) }
+    val scope = rememberCoroutineScope()
+
+    val snack = remember { SnackbarHostState() }
 
     var replaceTargetId by remember { mutableStateOf<Long?>(null) }
-    val replacePicker = rememberLauncherForActivityResult(
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+    var confirmResetTimer by remember { mutableStateOf(false) }
+    var gateDialog by remember { mutableStateOf(false) }
+
+    // Photo Picker (Add / Replace)
+    val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null && replaceTargetId != null) {
-            viewModel.replacePhoto(replaceTargetId!!, uri)
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        val rid = replaceTargetId
+        if (rid != null) {
+            viewModel.replacePhoto(rid, uri)
             replaceTargetId = null
+        } else {
+            viewModel.addPhotoFromPicker(uri)
         }
     }
+
+    // Camera Support
+    var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
     
-    // Permissions (Simple request on launch for now, strict UI later)
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success && tempCameraUri != null) {
+            viewModel.addPhotoFromPicker(tempCameraUri!!)
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
-    
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    ) { params ->
+        // user can retry
+    }
+
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+             viewModel.startTimer910()
+        } else {
+             scope.launch { snack.showSnackbar("Warning: Notifications are disabled.") }
+             viewModel.startTimer910()
+        }
+    }
+
+    fun launchCamera() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            val file = File.createTempFile("cam_", ".jpg", context.cacheDir)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            tempCameraUri = uri
+            cameraLauncher.launch(uri)
+        } else {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
     Scaffold(
         containerColor = MintBg,
+        snackbarHost = { SnackbarHost(snack) },
         topBar = {
-             StatusHeader(state)
+            StatusHeader(
+                state = state,
+                onResetTimer = {
+                    if (state.isTimerLocked) {
+                        // locked => reset disabled by spec, show explanation
+                        // Note: LaunchedEffect isn't suitable here inside callback, use CoroutineScope if needed
+                        // But for simplicity, we just rely on button disabled state or simple toast if strictly needed.
+                        // Here we just allow button to be clickable only if enabled.
+                    } else {
+                        confirmResetTimer = true
+                    }
+                },
+                onDeleteAll = { confirmDeleteAll = true },
+                onDownloadNext = { viewModel.exportNextPhoto() },
+                onRequestGateHelp = { gateDialog = true }
+            )
         },
         bottomBar = {
-             StickyBottomBar(
-                 state = state,
-                 onStart = { viewModel.startTimer910() },
-                 onCam = { Toast.makeText(context, "Camera not impl yet", Toast.LENGTH_SHORT).show() },
-                 onUpload = { 
-                     addPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                 },
-                 onReset = { viewModel.resetTimer() },
-                 onDeleteAll = { viewModel.deleteAll() }
-             )
+            StickyBottomBar(
+                state = state,
+                onStart = {
+                    // UI-level guard
+                    if (!state.gateOpen) {
+                        gateDialog = true
+                    } else {
+                        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            viewModel.startTimer910()
+                        }
+                    }
+                },
+                onCam = {
+                    launchCamera()
+                },
+                onUpload = {
+                    replaceTargetId = null
+                    pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }
+            )
         }
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 90.dp)
         ) {
-            // Pending Section
             item {
-                MintCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Pending (ยังไม่โหลด)", fontWeight = FontWeight.Bold, color = MintText)
-                        MintBadge("${state.pendingPhotos.size}", "wait")
-                    }
-                    if (state.pendingPhotos.isEmpty()) {
-                        Text("ยังไม่มีรายการ Pending", color = MintMuted, fontSize = 14.sp)
-                    }
-                }
-            }
-            
-            items(state.pendingPhotos) { photo ->
-                 PendingPhotoItem(
-                     photo = photo,
-                     onEdit = { 
-                         replaceTargetId = photo.id
-                         replacePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                     },
-                     onDownload = { viewModel.exportPhoto(photo) }
-                 )
-            }
-            
-            // Downloaded Section
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                MintCard {
-                     Row(verticalAlignment = Alignment.CenterVertically) {
-                         Text("Downloaded", fontWeight = FontWeight.Bold, color = MintText)
-                         Spacer(modifier = Modifier.weight(1f))
-                         MintBadge("${state.downloadedPhotos.size}", "ok")
-                     }
-                     // Progress Bar
-                     val total = state.pendingPhotos.size + state.downloadedPhotos.size
-                     val progress = if (total > 0) state.downloadedPhotos.size.toFloat() / 40f else 0f
-                     LinearProgressIndicator(
-                         progress = progress.coerceIn(0f, 1f),
-                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(8.dp).clip(RoundedCornerShape(4.dp)),
-                         color = MintAccent,
-                         trackColor = MintSoft
-                     )
-                }
-            }
-            
-            items(state.downloadedPhotos) { photo ->
-                DownloadedPhotoItem(photo)
-            }
-            
-            item { Spacer(modifier = Modifier.height(80.dp)) }
-        }
-    }
-}
-
-@Composable
-fun StatusHeader(state: MainUiState) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MintBg)
-            .padding(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val nextText = if (state.timer.running && state.gateOpen) state.schedule.nextTag ?: "-" else state.nextSlotTag
-            Text("Next: $nextText", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MintText)
-            Spacer(modifier = Modifier.weight(1f))
-            
-            // Download Next Button Logic? Only if available.
-            // Simplified: Not strictly specific in wireframe but good usage.
-        }
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        MintCard {
-            if (state.timer.running) {
-                if (!state.gateOpen) {
-                     Text("⚠ ต้องดาวน์โหลดรูปอย่างน้อย 1 รูป", color = MintWarn, fontWeight = FontWeight.Bold)
-                     Text("เพื่อเริ่มตารางแจ้งเตือน", color = MintMuted, fontSize = 12.sp)
-                } else if (!state.schedule.ok) {
-                     Text("⚠ ${state.schedule.error}", color = MintDanger, fontWeight = FontWeight.Bold)
-                } else {
-                     val nextAt = state.schedule.nextAt ?: 0L
-                     val left = nextAt - state.currentTime
-                     
-                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                         Column {
-                             Text("When", color = MintMuted, fontSize = 12.sp)
-                             Text(fmtTime(nextAt), fontSize = 24.sp, fontWeight = FontWeight.Black, color = MintAccent)
-                         }
-                         Column(horizontalAlignment = Alignment.End) {
-                             Text("Countdown", color = MintMuted, fontSize = 12.sp)
-                             val cdColor = if (left <= 0) MintDanger else MintText
-                             Text(fmtDuration(left), fontSize = 24.sp, fontWeight = FontWeight.Black, color = cdColor)
-                         }
-                     }
-                }
-            } else {
-                Text("เริ่มนับเวลาก่อน", modifier = Modifier.align(Alignment.CenterHorizontally), color = MintMuted)
-            }
-        }
-    }
-}
-
-@Composable
-fun PendingPhotoItem(
-    photo: PhotoEntity,
-    onEdit: () -> Unit,
-    onDownload: () -> Unit
-) {
-    MintCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Thumbnail
-            Image(
-                painter = rememberAsyncImagePainter(File(photo.filePath)),
-                contentDescription = photo.tag,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp))
-            )
-            
-            Spacer(modifier = Modifier.width(12.dp))
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Row {
-                    MintBadge(photo.tag, "ok")
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(fmtDate(photo.createdAt), fontSize = 12.sp, color = MintMuted)
-            }
-            
-            // Action Buttons
-            IconButton(onClick = onEdit) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MintMuted)
-            }
-            
-            var showConfirm by remember { mutableStateOf(false) }
-            if (showConfirm) {
-                AlertDialog(
-                    onDismissRequest = { showConfirm = false },
-                    title = { Text("ยืนยัน Download") },
-                    text = { Text("การดาวน์โหลดจะทำให้สถานะเปลี่ยนเป็น Downloaded และไม่สามารถแก้ไขได้อีก") },
-                    confirmButton = {
-                        Button(onClick = { onDownload(); showConfirm = false }) { Text("OK") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
-                    }
+                SectionHeaderCard(
+                    title = "Pending (ยังไม่ Export)",
+                    count = state.pendingPhotos.size,
+                    hint = if (state.pendingPhotos.isEmpty()) "ยังไม่มีรายการ Pending" else "กด Edit เพื่อแทนที่รูป / กด Download เพื่อ Export"
                 )
             }
-            
-            IconButton(
-                onClick = { showConfirm = true },
-                colors = IconButtonDefaults.iconButtonColors(contentColor = MintAccent)
+
+            items(state.pendingPhotos, key = { it.id }) { photo ->
+                PhotoCard(
+                    photo = photo,
+                    isDownloaded = false,
+                    onEdit = {
+                        replaceTargetId = photo.id
+                        pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onDownload = { viewModel.exportPhoto(photo) }
+                )
+            }
+
+            item {
+                SectionHeaderCard(
+                    title = "Downloaded (Exported)",
+                    count = state.downloadedPhotos.size,
+                    hint = if (state.downloadedPhotos.isEmpty()) "ยังไม่มีรายการ Downloaded" else "รายการที่ Export แล้ว (ติดสถานะ/เวลา)"
+                )
+            }
+
+            items(state.downloadedPhotos, key = { it.id }) { photo ->
+                PhotoCard(
+                    photo = photo,
+                    isDownloaded = true,
+                    onEdit = {
+                        // Spec v1.1: downloaded list generally should not be edited
+                    },
+                    onDownload = null
+                )
+            }
+
+            item {
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text("ล้างข้อมูลทั้งหมด") },
+            text = { Text("จะลบรูป/ข้อมูลทั้งหมด และรีเซ็ตตัวจับเวลา/การแจ้งเตือนทั้งหมด\n\nยืนยันหรือไม่?") },
+            containerColor = MintCard,
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDeleteAll = false
+                        viewModel.deleteAll()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                ) { Text("ลบทั้งหมด") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmDeleteAll = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                ) { Text("ยกเลิก") }
+            }
+        )
+    }
+
+    if (confirmResetTimer) {
+        AlertDialog(
+            onDismissRequest = { confirmResetTimer = false },
+            title = { Text("รีเซ็ตตัวจับเวลา") },
+            text = { Text("จะหยุดการจับเวลาและยกเลิกการแจ้งเตือน (Alarm) ทั้งหมด\n\nยืนยันหรือไม่?") },
+            containerColor = MintCard,
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmResetTimer = false
+                        viewModel.resetTimer()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                ) { Text("รีเซ็ต") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmResetTimer = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                ) { Text("ยกเลิก") }
+            }
+        )
+    }
+
+    if (gateDialog) {
+        AlertDialog(
+            onDismissRequest = { gateDialog = false },
+            title = { Text("เงื่อนไขก่อนเริ่มตารางแจ้งเตือน") },
+            text = {
+                Text(
+                    "ต้อง Export (Download) รูปอย่างน้อย 1 รูปก่อน\n" +
+                        "เพื่อให้ระบบ “เปิด Gate” และเริ่มคำนวณตารางแจ้งเตือนแบบแม่นยำ\n\n" +
+                        "หมายเหตุ: คุณยังสามารถเพิ่ม/แก้รูปได้ตามปกติ แต่การตั้ง Alarm จะยังไม่เริ่มจนกว่าจะ Export อย่างน้อย 1 รูป"
+                )
+            },
+            containerColor = MintCard,
+            confirmButton = {
+                TextButton(onClick = { gateDialog = false }, colors = ButtonDefaults.textButtonColors(contentColor = MintAccent)) { Text("เข้าใจแล้ว") }
+            }
+        )
+    }
+}
+
+@Composable
+fun StatusHeader(
+    state: MainUiState,
+    onResetTimer: () -> Unit,
+    onDeleteAll: () -> Unit,
+    onDownloadNext: () -> Unit,
+    onRequestGateHelp: () -> Unit
+) {
+    Surface(
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        color = MintBg, // blend with background
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Row 1: Title + Badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Download, contentDescription = "Download")
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "GhostShift",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MintText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Mint Light • Native Android",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MintMuted
+                    )
+                }
+
+                val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
+                MintBadge(text = badgeText, tone = if (state.gateOpen) "ok" else "wait")
+            }
+
+            // Row 2: Core status line
+            MintCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.AccessTime, contentDescription = null, tint = MintText)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (state.timer.running) "กำลังจับเวลา 9ชม10นาที" else "ยังไม่เริ่มจับเวลา",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MintText,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        val lockLabel = if (state.isTimerLocked) "LOCK" else "UNLOCK"
+                        AssistChip(
+                            onClick = { /* display only */ },
+                            enabled = false,
+                            label = { Text(lockLabel) },
+                            leadingIcon = {
+                                Icon(
+                                    if (state.isTimerLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                    contentDescription = null
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                disabledLabelColor = MintMuted2,
+                                disabledLeadingIconColor = MintMuted2
+                            )
+                        )
+                    }
+
+                    // Gate / progress to unlock
+                    val pairs = max(0, state.exportedPairsContiguous)
+                    val progress = (pairs.coerceAtMost(20) / 20f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = if (state.gateOpen) MintAccent else MintMuted2)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (state.gateOpen) "Gate: OPEN" else "Gate: CLOSED",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MintText,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onRequestGateHelp) { Text("ทำไมต้อง Export 1 รูป?", color = MintAccent) }
+                    }
+
+                    LinearProgressIndicator(
+                        progress = progress,
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MintAccent,
+                        trackColor = MintLine
+                    )
+                    Text(
+                        "ปลดล็อกเมื่อ Export ครบคู่ต่อเนื่อง 1..20 (ตอนนี้: $pairs/20)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MintMuted
+                    )
+
+                    // Schedule block
+                    ScheduleBlock(state = state)
+
+                    Divider(color = MintLine, thickness = 1.dp)
+
+                    // Actions
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onDownloadNext,
+                            modifier = Modifier.weight(1.5f),
+                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White),
+                            enabled = state.pendingPhotos.isNotEmpty()
+                        ) {
+                            Icon(Icons.Default.DownloadForOffline, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Download Next")
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onResetTimer,
+                            enabled = !state.isTimerLocked,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                        ) {
+                            Icon(Icons.Default.RestartAlt, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Reset")
+                        }
+
+                        OutlinedButton(
+                            onClick = onDeleteAll,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MintDanger)
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Delete All")
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun DownloadedPhotoItem(photo: PhotoEntity) {
-    MintCard {
+private fun ScheduleBlock(state: MainUiState) {
+    val schedule = state.schedule
+
+    val nextAt = schedule.nextAt
+    val nextTag = schedule.nextTag
+
+    val countdownMs = if (nextAt != null) max(0L, nextAt - state.currentTime) else null
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = rememberAsyncImagePainter(File(photo.filePath)),
-                contentDescription = photo.tag,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp))
+            Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MintText)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Schedule",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MintText
             )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(photo.tag, fontWeight = FontWeight.Bold, color = MintMuted)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(Icons.Default.Check, contentDescription = null, tint = MintAccent, modifier = Modifier.size(16.dp))
-                }
-                Text("DL: ${fmtTime(photo.downloadedAt ?: 0)}", fontSize = 12.sp, color = MintMuted2)
+            Spacer(Modifier.weight(1f))
+
+            val alarmTone = if (state.alarmActive) "ok" else "wait"
+            MintBadge(text = if (state.alarmActive) "ALARM ON" else "ALARM OFF", tone = alarmTone)
+        }
+
+        if (!schedule.ok) {
+            Text(
+                schedule.warn ?: "ตารางยังไม่พร้อม",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MintWarn
+            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                MetricPill(
+                    label = "Next",
+                    value = nextTag ?: "-",
+                    icon = Icons.Default.Flag
+                )
+                MetricPill(
+                    label = "When",
+                    value = if (nextAt != null) fmtTime(nextAt) else "-",
+                    icon = Icons.Default.Schedule
+                )
+                MetricPill(
+                    label = "Countdown",
+                    value = if (countdownMs != null) fmtDuration(countdownMs) else "-",
+                    icon = Icons.Default.Timer
+                )
             }
         }
     }
@@ -287,92 +489,276 @@ fun StickyBottomBar(
     state: MainUiState,
     onStart: () -> Unit,
     onCam: () -> Unit,
-    onUpload: () -> Unit,
-    onReset: () -> Unit,
-    onDeleteAll: () -> Unit
+    onUpload: () -> Unit
 ) {
-    val timer = state.timer
-    // If running => Start button changes to "Stop 12:34" or "Locked"
-    // Reset enabled only if Unlocked
-    
-    // Bottom Bar Container
-    Column(Modifier.background(MintCard).padding(14.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            // Camera
-            FloatingActionButton(
-                onClick = onCam,
-                containerColor = MintSoft,
-                contentColor = MintText,
-                shape = RoundedCornerShape(16.dp)
+    Surface(
+        tonalElevation = 4.dp,
+        shadowElevation = 8.dp,
+        color = MintCard // Make it distinct
+    ) {
+        Column {
+            Divider(color = MintLine, thickness = 1.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.CameraAlt, "Camera")
+                Button(
+                    onClick = onStart,
+                    enabled = state.canStartTimer,
+                    modifier = Modifier.weight(1.2f),
+                    colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Start 9:10")
+                }
+
+                OutlinedButton(
+                    onClick = onCam,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                ) {
+                    Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                }
+
+                OutlinedButton(
+                    onClick = onUpload,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                ) {
+                    Icon(Icons.Default.Upload, contentDescription = null)
+                }
             }
-            
-            // Start/Stop Main Button
-            val btnText = if (!timer.running) "⏱️ เริ่มนับเวลา" else "สิ้นสุด ${fmtTime(timer.targetAt ?: 0)}"
-            val btnEnabled = !timer.running || !timer.locked
-            
-            Button(
-                onClick = { if (!timer.running) onStart() else onReset() }, // Simplified action logic
-                enabled = true, // We handle "Locked" by showing dialog or toast?
-                // Spec B5: Reset All must be available even when locked (double confirm)
-                // But the main button action usually toggles. 
-                // Let's make main button just "Start" if not running. 
-                // If Running, it shows target. Clicking it might fail if locked.
-                modifier = Modifier.height(56.dp).weight(1f).padding(horizontal = 12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MintAccent, 
-                    disabledContainerColor = MintMuted2
-                )
-            ) {
-                Text(btnText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            }
-            
-            // Upload
-            FloatingActionButton(
-                onClick = onUpload,
-                containerColor = MintSoft,
-                contentColor = MintText,
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Icon(Icons.Default.Add, "Upload")
-            }
-        }
-        
-        // Debug/Danger Zone (Drawer replacement)
-        if (true) { // Always show for test? Or put in a menu?
-             Spacer(modifier = Modifier.height(8.dp))
-             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                 var showDelConfirm by remember { mutableStateOf(false) }
-                 
-                 if (showDelConfirm) {
-                     AlertDialog(
-                         onDismissRequest = { showDelConfirm = false },
-                         title = { Text("ลบทั้งหมด & รีเซ็ต?") },
-                         text = { Text("ยืนยันการลบข้อมูลทั้งหมดและเริ่มใหม่ การกระทำนี้ไม่สามารถย้อนกลับได้") },
-                         confirmButton = {
-                             Button(onClick = { onDeleteAll(); showDelConfirm = false }, colors = ButtonDefaults.buttonColors(containerColor = MintDanger)) { Text("ลบทั้งหมด") }
-                         },
-                         dismissButton = { TextButton(onClick = { showDelConfirm = false }) { Text("ยกเลิก") } }
-                     )
-                 }
-                 
-                 TextButton(onClick = { showDelConfirm = true }) {
-                     Text("🗑 Delete All", color = MintDanger, fontSize = 12.sp)
-                 }
-             }
         }
     }
 }
 
-// Helpers
-fun fmtTime(ms: Long): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(ms))
-fun fmtDate(ms: Long): String = SimpleDateFormat("dd/MM HH:mm", Locale.US).format(Date(ms))
-fun fmtDuration(ms: Long): String {
-    if (ms <= 0) return "00:00:00"
-    val s = ms / 1000
-    val h = s / 3600
-    val m = (s % 3600) / 60
-    val sec = s % 60
-    return String.format("%02d:%02d:%02d", h, m, sec)
+@Composable
+private fun SectionHeaderCard(
+    title: String,
+    count: Int,
+    hint: String
+) {
+    MintCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MintText,
+                modifier = Modifier.weight(1f)
+            )
+            MintBadge(text = "$count", tone = if (count > 0) "ok" else "wait")
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MintMuted
+        )
+    }
+}
+
+@Composable
+private fun PhotoCard(
+    photo: PhotoEntity,
+    isDownloaded: Boolean,
+    onEdit: () -> Unit,
+    onDownload: (() -> Unit)?
+) {
+    MintCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top
+        ) {
+            // Thumb
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data("file://${photo.filePath}")
+                    .crossfade(true)
+                    .build(),
+                contentDescription = photo.tag,
+                modifier = Modifier
+                    .size(80.dp) // larger thumb
+            )
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        photo.tag,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MintText,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (isDownloaded) {
+                        MintBadge(text = "EXPORTED", tone = "ok")
+                    } else {
+                        MintBadge(text = "PENDING", tone = "wait")
+                    }
+                }
+
+                val metaLine = buildString {
+                    append("idx: ${photo.idx} • ")
+                    append(photo.kind)
+                    if (photo.editedAt != null) append(" • edited")
+                }
+                Text(
+                    metaLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MintMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (isDownloaded) {
+                    val at = photo.downloadedAt
+                    Text(
+                        if (at != null) "DownloadedAt: ${fmtDateTime(at)}" else "DownloadedAt: -",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MintMuted2
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = onEdit,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(0.dp), // fit content
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Edit", style = MaterialTheme.typography.labelLarge)
+                    }
+
+                    if (!isDownloaded && onDownload != null) {
+                        Button(
+                            onClick = onDownload,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(0.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Download", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* -----------------------------
+   File-private Mint helpers
+------------------------------ */
+
+@Composable
+private fun MintCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large, // RoundedCornerShape(16.dp) usually
+        colors = CardDefaults.cardColors(
+            containerColor = MintCard,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun MintBadge(text: String, tone: String) {
+    // Explicit color mapping
+    val (bg, fg) = when (tone) {
+        "ok" -> MintOkBg to MintOkText
+        "wait" -> MintWaitBg to MintWaitText
+        "err" -> MintErrBg to MintErrText
+        else -> MintSoft to MintText
+    }
+    Surface(
+        color = bg,
+        contentColor = fg,
+        shape = MaterialTheme.shapes.small
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun MetricPill(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MintSoft,
+        modifier = Modifier.weight(1f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = MintMuted, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Column {
+                Text(label, style = MaterialTheme.typography.labelSmall, color = MintMuted)
+                Text(
+                    value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MintText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/* -----------------------------
+   Formatting helpers
+------------------------------ */
+
+private fun fmtTime(ms: Long): String {
+    val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+    return sdf.format(Date(ms))
+}
+
+private fun fmtDateTime(ms: Long): String {
+    val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+    return sdf.format(Date(ms))
+}
+
+private fun fmtDuration(ms: Long): String {
+    val totalSec = ms / 1000L
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return if (h > 0) String.format(Locale.getDefault(), "%d:%02d:%02d", h, m, s)
+    else String.format(Locale.getDefault(), "%02d:%02d", m, s)
 }
