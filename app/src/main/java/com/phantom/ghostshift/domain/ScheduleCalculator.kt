@@ -6,7 +6,7 @@ import kotlin.math.min
 import kotlin.math.roundToLong
 
 object ScheduleCalculator {
-
+    // Gap constraints: IN photos 3-25 min, OUT photos 4-30 min
     private fun minGapMinutes(kind: Kind): Double = if (kind == Kind.IN) 3.0 else 4.0
     private fun maxGapMinutes(kind: Kind): Double = if (kind == Kind.IN) 25.0 else 30.0
 
