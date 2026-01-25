@@ -80,25 +80,27 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        this.scaleType = PreviewView.ScaleType.FIT_CENTER
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        preview.setSurfaceProvider(this.surfaceProvider)
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        // Mirror horizontally for front camera (like a mirror)
-                        scaleX = if (lensFacing == CameraSelector.LENS_FACING_FRONT) -1f else 1f
+            key(lensFacing) {
+                AndroidView(
+                    factory = { ctx ->
+                        PreviewView(ctx).apply {
+                            this.scaleType = PreviewView.ScaleType.FIT_CENTER
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            preview.setSurfaceProvider(this.surfaceProvider)
+                        }
                     },
-            )
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            // Mirror horizontally for front camera (like a mirror)
+                            scaleX = if (lensFacing == CameraSelector.LENS_FACING_FRONT) -1f else 1f
+                        },
+                )
+            }
             
             // 4:3 Frame Overlay - shows the capture area
             BoxWithConstraints(
