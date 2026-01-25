@@ -6,6 +6,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -116,6 +120,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
+    // Preview State
+    var previewPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
+
     if (showCamera) {
         CameraScreen(
             outputDirectory = getOutputDirectory(context),
@@ -134,6 +141,41 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onBack = { showSettings = false }
         )
         return
+    }
+
+    // Preview Dialog
+    if (previewPhoto != null) {
+        val p = previewPhoto!!
+        AlertDialog(
+            onDismissRequest = { previewPhoto = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier.fillMaxSize().background(Color.Black),
+            title = null,
+            text = null,
+            confirmButton = {},
+            dismissButton = {
+                Box(Modifier.fillMaxSize()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data("file://${p.filePath}")
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                    IconButton(
+                        onClick = { previewPhoto = null },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(16.dp)
+                            .background(Color.Black.copy(alpha=0.5f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                    }
+                }
+            }
+        )
     }
 
     if (showEditDialog) {
@@ -164,10 +206,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 state = state,
                 onResetTimer = {
                     if (state.isTimerLocked) {
-                        // locked => reset disabled by spec, show explanation
-                        // Note: LaunchedEffect isn't suitable here inside callback, use CoroutineScope if needed
-                        // But for simplicity, we just rely on button disabled state or simple toast if strictly needed.
-                        // Here we just allow button to be clickable only if enabled.
+                        // locked
                     } else {
                         confirmResetTimer = true
                     }
@@ -211,7 +250,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 SectionHeaderCard(
                     title = "Pending (ยังไม่ Export)",
                     count = state.pendingPhotos.size,
-                    hint = if (state.pendingPhotos.isEmpty()) "ยังไม่มีรายการ Pending" else "กด Edit เพื่อแทนที่รูป / กด Download เพื่อ Export"
+                    hint = if (state.pendingPhotos.isEmpty()) "ยังไม่มีรายการ Pending" else "แตะรูปเพื่อดูเต็มจอ / กด Edit เพื่อแก้ไข"
                 )
             }
 
@@ -226,7 +265,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         editTargetId = photo.id
                         showEditDialog = true
                     },
-                    onDownload = { viewModel.exportPhoto(photo) }
+                    onDownload = { viewModel.exportPhoto(photo) },
+                    onPreview = { previewPhoto = photo }
                 )
             }
 
@@ -234,7 +274,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 SectionHeaderCard(
                     title = "Downloaded (Exported)",
                     count = state.downloadedPhotos.size,
-                    hint = if (state.downloadedPhotos.isEmpty()) "ยังไม่มีรายการ Downloaded" else "รายการที่ Export แล้ว (ติดสถานะ/เวลา)"
+                    hint = if (state.downloadedPhotos.isEmpty()) "ยังไม่มีรายการ Downloaded" else "รายการที่ Export แล้ว"
                 )
             }
 
@@ -248,7 +288,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onEdit = {
                         // Spec v1.1: downloaded list generally should not be edited
                     },
-                    onDownload = null
+                    onDownload = null,
+                    onPreview = { previewPhoto = photo }
                 )
             }
 
@@ -385,8 +426,16 @@ fun StatusHeader(
                     ) {
                         Icon(Icons.Default.AccessTime, contentDescription = null, tint = MintText)
                         Spacer(Modifier.width(8.dp))
+                        
+                        // Phase 1: Absolute Target Time Header
+                        val headerText = if (state.timer.running && state.timer.targetAt != null) {
+                            "Target: ${fmtTime(state.timer.targetAt!!)}"
+                        } else {
+                            "Ready to Start"
+                        }
+                        
                         Text(
-                            if (state.timer.running) "กำลังจับเวลา 9ชม10นาที" else "ยังไม่เริ่มจับเวลา",
+                            headerText,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MintText,
@@ -426,7 +475,7 @@ fun StatusHeader(
                             color = MintText,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = onRequestGateHelp) { Text("ทำไมต้อง Export 1 รูป?", color = MintAccent) }
+                        TextButton(onClick = onRequestGateHelp) { Text("Help?", color = MintAccent) }
                     }
 
                     LinearProgressIndicator(
@@ -473,8 +522,6 @@ fun StatusHeader(
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
                         ) {
-                            Icon(Icons.Default.RestartAlt, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
                             Text("Reset")
                         }
 
@@ -483,8 +530,6 @@ fun StatusHeader(
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MintDanger)
                         ) {
-                            Icon(Icons.Default.DeleteForever, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
                             Text("Delete All")
                         }
                     }
@@ -521,7 +566,7 @@ private fun ScheduleBlock(state: MainUiState) {
 
         if (!schedule.ok) {
             Text(
-                schedule.warn ?: "ตารางยังไม่พร้อม",
+                schedule.warn ?: "Schedule waiting...",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MintWarn
             )
@@ -574,31 +619,37 @@ fun StickyBottomBar(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Phase 1: Absolute Target Time in Button
+                val hypotheticTarget = System.currentTimeMillis() + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
+                val btnLabel = if (!state.timer.running) "Start (Finish ${fmtTime(hypotheticTarget)})" else "Running..."
+
                 Button(
                     onClick = onStart,
                     enabled = state.canStartTimer,
-                    modifier = Modifier.weight(1.2f),
+                    modifier = Modifier.weight(1.5f),
                     colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Start 9:10")
+                    Text(btnLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
 
                 OutlinedButton(
                     onClick = onCam,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                    modifier = Modifier.weight(0.8f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
+                    contentPadding = PaddingValues(0.dp)
                 ) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                    Icon(Icons.Default.PhotoCamera, contentDescription = "Cam")
                 }
 
                 OutlinedButton(
                     onClick = onUpload,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                    modifier = Modifier.weight(0.8f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
+                    contentPadding = PaddingValues(0.dp)
                 ) {
-                    Icon(Icons.Default.Upload, contentDescription = null)
+                    Icon(Icons.Default.Upload, contentDescription = "Up")
                 }
             }
         }
@@ -626,11 +677,7 @@ private fun SectionHeaderCard(
             MintBadge(text = "$count", type = if (count > 0) "ok" else "wait")
         }
         Spacer(Modifier.height(4.dp))
-        Text(
-            hint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MintMuted
-        )
+        Text(hint, style = MaterialTheme.typography.bodySmall, color = MintMuted)
     }
 }
 
@@ -641,7 +688,8 @@ private fun PhotoCard(
     dueAt: Long?,
     currentTime: Long,
     onEdit: () -> Unit,
-    onDownload: (() -> Unit)?
+    onDownload: (() -> Unit)?,
+    onPreview: () -> Unit
 ) {
     val isDue = dueAt != null && currentTime >= dueAt
     val countdown = if (dueAt != null && dueAt > currentTime) dueAt - currentTime else null
@@ -649,7 +697,7 @@ private fun PhotoCard(
 
     MintCard(containerColor = cardColor) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().clickable { onPreview() },
             verticalAlignment = Alignment.Top
         ) {
             // Thumb
@@ -661,11 +709,14 @@ private fun PhotoCard(
                 contentDescription = photo.tag,
                 modifier = Modifier
                     .size(80.dp) // larger thumb
+                    .background(Color.Gray),
+                contentScale = ContentScale.Crop
             )
 
             Spacer(Modifier.width(12.dp))
 
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Row 1: Tag + Badges
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         photo.tag,
@@ -680,7 +731,7 @@ private fun PhotoCard(
                     } else if (isDue) {
                          MintBadge(text = "DUE NOW", type = "error")
                     } else if (countdown != null) {
-                        // Show localized countdown
+                        // Phase 2: Per-Card Countdown
                         val cd = fmtDuration(countdown)
                         MintBadge(text = "In $cd", type = "wait")
                     } else {
@@ -688,12 +739,19 @@ private fun PhotoCard(
                     }
                 }
 
+                // Phase 2: Prominent Plan Time
+                if (dueAt != null && !isDownloaded) {
+                    Text(
+                        "Plan: ${fmtTime(dueAt)}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isDue) MintDanger else MintAccent
+                    )
+                }
+
+                // Row 3: Meta
                 val metaLine = buildString {
-                    append("idx: ${photo.idx} • ")
-                    append(photo.kind)
-                    if (dueAt != null) {
-                        append(" • Plan: ${fmtTime(dueAt)}")
-                    }
+                    append("idx: ${photo.idx} • ${photo.kind}")
                     if (photo.editedAt != null) append(" • edited")
                 }
                 Text(
@@ -713,8 +771,9 @@ private fun PhotoCard(
                     )
                 }
 
+                // Actions
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -722,11 +781,10 @@ private fun PhotoCard(
                         onClick = onEdit,
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(0.dp), // fit content
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
+                        shape = MaterialTheme.shapes.small
                     ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Edit", style = MaterialTheme.typography.labelLarge)
+                        Text("Edit", style = MaterialTheme.typography.labelMedium)
                     }
 
                     if (!isDownloaded && onDownload != null) {
@@ -734,11 +792,10 @@ private fun PhotoCard(
                             onClick = onDownload,
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(0.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
+                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White),
+                            shape = MaterialTheme.shapes.small
                         ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Download", style = MaterialTheme.typography.labelLarge)
+                            Text("Download", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }

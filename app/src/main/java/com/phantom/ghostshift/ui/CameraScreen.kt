@@ -47,8 +47,16 @@ fun CameraScreen(
     // CameraX PreviewView handles mirroring for front camera automatically in view, but the captured image might not.
     // We will just stick to standard capture for now, focusing on Viewfinder UI parity.
     
-    val preview = remember { Preview.Builder().build() }
-    val imageCapture = remember { ImageCapture.Builder().build() }
+    val preview = remember { 
+        Preview.Builder()
+            .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_4_3)
+            .build() 
+    }
+    val imageCapture = remember { 
+        ImageCapture.Builder()
+            .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_4_3)
+            .build() 
+    }
     val cameraSelector = remember(lensFacing) { CameraSelector.Builder().requireLensFacing(lensFacing).build() }
     
     LaunchedEffect(lensFacing) {

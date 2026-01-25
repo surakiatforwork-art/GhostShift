@@ -1,20 +1,5 @@
 
-FAILURE: Build failed with an exception.
+ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
 
-* What went wrong:
-Could not determine the dependencies of task ':app:testDebugUnitTest'.
-> SDK location not found. Define a valid SDK location with an ANDROID_HOME environment variable or by setting the sdk.dir path in your project's local properties file at 'D:\1111\111119\GhostShiftNative\local.properties'.
-
-* Try:
-> Run with --stacktrace option to get the stack trace.
-> Run with --info or --debug option to get more log output.
-> Run with --scan to get full insights.
-> Get more help at https://help.gradle.org.
-
-Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
-
-You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
-
-For more on this, please refer to https://docs.gradle.org/8.7/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
-
-BUILD FAILED in 2s
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation.
