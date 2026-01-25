@@ -92,14 +92,15 @@ fun CameraScreen(
                             )
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                             preview.setSurfaceProvider(this.surfaceProvider)
+                            // Mirror preview for front camera
+                            scaleX = if (isFrontCamera) -1f else 1f
                         }
                     },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            // Mirror horizontally for front camera (like a mirror)
-                            rotationY = if (isFrontCamera) 180f else 0f
-                        },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { view ->
+                        // Update mirror when camera changes
+                        view.scaleX = if (isFrontCamera) -1f else 1f
+                    }
                 )
             }
             
