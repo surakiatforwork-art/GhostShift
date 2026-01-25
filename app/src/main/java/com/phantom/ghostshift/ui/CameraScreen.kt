@@ -244,10 +244,10 @@ private fun takePhoto(
                 var processed: android.graphics.Bitmap? = null
                 try {
                     // Read EXIF orientation
-                    val exif = androidx.exifinterface.media.ExifInterface(photoFile.absolutePath)
+                    val exif = android.media.ExifInterface(photoFile.absolutePath)
                     val orientation = exif.getAttributeInt(
-                        androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
-                        androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
+                        android.media.ExifInterface.TAG_ORIENTATION,
+                        android.media.ExifInterface.ORIENTATION_NORMAL
                     )
                     
                     // Decode with sample size to save memory
@@ -264,11 +264,11 @@ private fun takePhoto(
                         
                         // Apply EXIF rotation to fix orientation issues on some devices
                         when (orientation) {
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
+                            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                            android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+                            android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
                         }
                         
                         // Mirror horizontally for front camera (like a mirror)
@@ -323,10 +323,10 @@ private fun takePhoto(
                         }
                         
                         // Clear EXIF orientation since we already rotated
-                        val newExif = androidx.exifinterface.media.ExifInterface(photoFile.absolutePath)
+                        val newExif = android.media.ExifInterface(photoFile.absolutePath)
                         newExif.setAttribute(
-                            androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL.toString()
+                            android.media.ExifInterface.TAG_ORIENTATION,
+                            android.media.ExifInterface.ORIENTATION_NORMAL.toString()
                         )
                         newExif.saveAttributes()
                     }
