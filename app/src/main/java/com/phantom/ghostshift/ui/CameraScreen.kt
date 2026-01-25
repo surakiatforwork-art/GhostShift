@@ -27,6 +27,10 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import java.io.File
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
@@ -41,7 +45,7 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     
-    var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_BACK) }
+    var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_FRONT) }
     var scaleType by remember { mutableStateOf(PreviewView.ScaleType.FILL_CENTER) }
     // Web: Mirror for front cam is typical. Let's support it or just rely on CameraX default.
     // CameraX PreviewView handles mirroring for front camera automatically in view, but the captured image might not.
@@ -71,20 +75,89 @@ fun CameraScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { ctx ->
-                PreviewView(ctx).apply {
-                    this.scaleType = scaleType
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    preview.setSurfaceProvider(this.surfaceProvider)
-                }
-            },
+        // Camera Preview with mirror effect for front camera
+        Box(
             modifier = Modifier.fillMaxSize(),
-        )
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        this.scaleType = PreviewView.ScaleType.FIT_CENTER
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        preview.setSurfaceProvider(this.surfaceProvider)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        // Mirror horizontally for front camera (like a mirror)
+                        scaleX = if (lensFacing == CameraSelector.LENS_FACING_FRONT) -1f else 1f
+                    },
+            )
+            
+            // 4:3 Frame Overlay - shows the capture area
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                val maxW = maxWidth
+                val maxH = maxHeight
+                // Calculate 4:3 portrait frame size
+                val frameWidth: androidx.compose.ui.unit.Dp
+                val frameHeight: androidx.compose.ui.unit.Dp
+                
+                // Portrait 3:4 (width:height = 3:4)
+                val targetRatio = 3f / 4f
+                val screenRatio = maxW / maxH
+                
+                if (screenRatio > targetRatio) {
+                    // Screen is wider - fit to height
+                    frameHeight = maxH * 0.85f
+                    frameWidth = frameHeight * targetRatio
+                } else {
+                    // Screen is taller - fit to width
+                    frameWidth = maxW * 0.9f
+                    frameHeight = frameWidth / targetRatio
+                }
+                
+                // Draw frame border
+                Box(
+                    modifier = Modifier
+                        .size(frameWidth, frameHeight)
+                        .border(2.dp, Color.White.copy(alpha = 0.7f))
+                )
+                
+                // Corner indicators
+                Canvas(
+                    modifier = Modifier.size(frameWidth, frameHeight)
+                ) {
+                    val cornerLength = 30.dp.toPx()
+                    val strokeWidth = 4.dp.toPx()
+                    val color = Color.White
+                    
+                    // Top-left corner
+                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(cornerLength, 0f), strokeWidth)
+                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(0f, cornerLength), strokeWidth)
+                    
+                    // Top-right corner
+                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width - cornerLength, 0f), strokeWidth)
+                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width, cornerLength), strokeWidth)
+                    
+                    // Bottom-left corner
+                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(cornerLength, size.height), strokeWidth)
+                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(0f, size.height - cornerLength), strokeWidth)
+                    
+                    // Bottom-right corner
+                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, size.height), androidx.compose.ui.geometry.Offset(size.width - cornerLength, size.height), strokeWidth)
+                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, size.height), androidx.compose.ui.geometry.Offset(size.width, size.height - cornerLength), strokeWidth)
+                }
+            }
+        }
 
         // Overlay UI
         // Top Bar: Close, Switch
@@ -166,43 +239,105 @@ private fun takePhoto(
             }
 
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                // Parity: Front camera must be mirrored (as seen in preview)
-                if (isFrontFacing) {
-                    var bitmap: android.graphics.Bitmap? = null
-                    var flipped: android.graphics.Bitmap? = null
-                    try {
-                        // Use options to limit memory usage
-                        val options = android.graphics.BitmapFactory.Options().apply {
-                            inJustDecodeBounds = true
-                        }
-                        android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                        
-                        // Calculate sample size
-                        options.inSampleSize = calculateInSampleSize(options, 1920, 1080)
-                        options.inJustDecodeBounds = false
-                        
-                        bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                        if (bitmap != null) {
-                            val matrix = android.graphics.Matrix().apply { preScale(-1f, 1f) }
-                            flipped = android.graphics.Bitmap.createBitmap(
-                                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
-                            )
-                            bitmap.recycle()
-                            java.io.FileOutputStream(photoFile).use { out ->
-                                flipped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                            }
-                        }
-                    } catch (e: OutOfMemoryError) {
-                        e.printStackTrace()
-                        // Handle OOM - maybe try with lower quality
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    } finally {
-                        flipped?.recycle()
-                        bitmap?.recycle()
-                        // Force garbage collection
-                        System.gc()
+                // Process image: fix rotation, enforce portrait 4:3, mirror if front camera
+                var bitmap: android.graphics.Bitmap? = null
+                var processed: android.graphics.Bitmap? = null
+                try {
+                    // Read EXIF orientation
+                    val exif = androidx.exifinterface.media.ExifInterface(photoFile.absolutePath)
+                    val orientation = exif.getAttributeInt(
+                        androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
+                        androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
+                    )
+                    
+                    // Decode with sample size to save memory
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
                     }
+                    android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                    options.inSampleSize = calculateInSampleSize(options, 1600, 1600)
+                    options.inJustDecodeBounds = false
+                    
+                    bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                    if (bitmap != null) {
+                        val matrix = android.graphics.Matrix()
+                        
+                        // Apply EXIF rotation to fix orientation issues on some devices
+                        when (orientation) {
+                            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                            androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+                            androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
+                        }
+                        
+                        // Mirror horizontally for front camera (like a mirror)
+                        if (isFrontFacing) {
+                            matrix.preScale(-1f, 1f)
+                        }
+                        
+                        // Apply transformations
+                        var rotated = android.graphics.Bitmap.createBitmap(
+                            bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                        )
+                        if (rotated != bitmap) bitmap.recycle()
+                        
+                        // Ensure portrait orientation (height > width)
+                        if (rotated.width > rotated.height) {
+                            val rotateMatrix = android.graphics.Matrix().apply { postRotate(90f) }
+                            val portrait = android.graphics.Bitmap.createBitmap(
+                                rotated, 0, 0, rotated.width, rotated.height, rotateMatrix, true
+                            )
+                            rotated.recycle()
+                            rotated = portrait
+                        }
+                        
+                        // Crop to 3:4 aspect ratio (portrait)
+                        val targetRatio = 3f / 4f
+                        val currentRatio = rotated.width.toFloat() / rotated.height.toFloat()
+                        
+                        processed = if (kotlin.math.abs(currentRatio - targetRatio) > 0.01f) {
+                            val cropW: Int
+                            val cropH: Int
+                            if (currentRatio > targetRatio) {
+                                // Too wide, crop width
+                                cropH = rotated.height
+                                cropW = (cropH * targetRatio).toInt()
+                            } else {
+                                // Too tall, crop height
+                                cropW = rotated.width
+                                cropH = (cropW / targetRatio).toInt()
+                            }
+                            val startX = (rotated.width - cropW) / 2
+                            val startY = (rotated.height - cropH) / 2
+                            val cropped = android.graphics.Bitmap.createBitmap(rotated, startX, startY, cropW, cropH)
+                            if (cropped != rotated) rotated.recycle()
+                            cropped
+                        } else {
+                            rotated
+                        }
+                        
+                        // Save processed image
+                        java.io.FileOutputStream(photoFile).use { out ->
+                            processed.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                        }
+                        
+                        // Clear EXIF orientation since we already rotated
+                        val newExif = androidx.exifinterface.media.ExifInterface(photoFile.absolutePath)
+                        newExif.setAttribute(
+                            androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
+                            androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL.toString()
+                        )
+                        newExif.saveAttributes()
+                    }
+                } catch (e: OutOfMemoryError) {
+                    e.printStackTrace()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    processed?.recycle()
+                    bitmap?.recycle()
+                    System.gc()
                 }
                 onImageCaptured(android.net.Uri.fromFile(photoFile))
             }
