@@ -35,6 +35,33 @@ import java.io.File
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import android.view.TextureView
+import android.util.Log
+
+// Helper functions for TextureView mirror
+private fun findTextureView(v: android.view.View): TextureView? {
+    if (v is TextureView) return v
+    if (v is android.view.ViewGroup) {
+        for (i in 0 until v.childCount) {
+            val r = findTextureView(v.getChildAt(i))
+            if (r != null) return r
+        }
+    }
+    return null
+}
+
+private fun applyMirror(previewView: PreviewView, isFront: Boolean) {
+    previewView.post {
+        val tv = findTextureView(previewView)
+        if (tv != null) {
+            tv.scaleX = if (isFront) -1f else 1f   // mirror เฉพาะภาพกล้อง
+            Log.d("CameraScreen", "Applied mirror to TextureView: scaleX=${tv.scaleX}")
+        } else {
+            // ถ้าไม่มี TextureView แปลว่ายังเป็น SurfaceView → mirror ด้วย scaleX จะไม่เห็นผล
+            Log.w("CameraScreen", "No TextureView found. Likely SurfaceView; mirror won't work.")
+        }
+    }
+}
 
 @Composable
 fun CameraScreen(
@@ -74,48 +101,33 @@ fun CameraScreen(
         )
     }
 
-    // Remember PreviewView instance to apply scaleX directly
-    // COMPATIBLE mode uses TextureView which supports scaleX transform
-    val previewView = remember {
-        PreviewView(context).apply {
-            this.scaleType = PreviewView.ScaleType.FIT_CENTER
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            // COMPATIBLE uses TextureView internally, which supports scaleX for mirror
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        }
-    }
-    
-    // Connect preview to PreviewView
-    LaunchedEffect(preview) {
-        preview.setSurfaceProvider(previewView.surfaceProvider)
-    }
-    
-    // Apply mirror effect when camera changes
-    // COMPATIBLE mode uses TextureView which supports scaleX transform for mirror
-    LaunchedEffect(lensFacing) {
-        val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
-        val scale = if (isFront) -1f else 1f
-        
-        // Debug: Check what implementation is actually used
-        val childView = previewView.getChildAt(0)
-        val viewType = childView?.javaClass?.simpleName ?: "null"
-        println("CameraScreen: PreviewView child type = $viewType")
-        
-        // Apply scaleX to PreviewView - works because COMPATIBLE uses TextureView
-        previewView.scaleX = scale
-    }
-
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // Camera Preview with mirror effect for front camera
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
+            // AndroidView with proper initialization order - INSIDE the Box
             AndroidView(
-                factory = { previewView },
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        // 1. Set implementationMode FIRST (before surface provider)
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        this.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    }
+                },
+                update = { previewView ->
+                    // 2. Connect preview to PreviewView
+                    preview.setSurfaceProvider(previewView.surfaceProvider)
+                    
+                    // 3. Apply mirror after preview is connected
+                    val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
+                    applyMirror(previewView, isFront)
+                },
                 modifier = Modifier.fillMaxSize()
             )
             
