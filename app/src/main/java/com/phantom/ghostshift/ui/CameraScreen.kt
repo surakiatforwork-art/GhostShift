@@ -86,15 +86,27 @@ fun CameraScreen(
         }
     }
     
-    // Update mirror effect when camera changes
-    LaunchedEffect(lensFacing) {
-        val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
-        previewView.scaleX = if (isFront) -1f else 1f
-    }
-    
     // Connect preview to PreviewView
     LaunchedEffect(preview) {
         preview.setSurfaceProvider(previewView.surfaceProvider)
+    }
+    
+    // Apply mirror effect when camera changes
+    // Must apply to BOTH PreviewView AND its child (TextureView) for guaranteed mirror
+    LaunchedEffect(lensFacing) {
+        val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
+        val scale = if (isFront) -1f else 1f
+        
+        // Apply to PreviewView itself
+        previewView.scaleX = scale
+        
+        // Also apply to child view (TextureView) when it becomes available
+        // This ensures mirror works regardless of internal implementation
+        kotlinx.coroutines.delay(300) // Wait for child to be created
+        val childView = previewView.getChildAt(0)
+        if (childView != null) {
+            childView.scaleX = scale
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
