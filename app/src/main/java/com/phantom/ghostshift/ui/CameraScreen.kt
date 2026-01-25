@@ -80,6 +80,7 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
+            val isFrontCamera = lensFacing == CameraSelector.LENS_FACING_FRONT
             key(lensFacing) {
                 AndroidView(
                     factory = { ctx ->
@@ -97,7 +98,7 @@ fun CameraScreen(
                         .fillMaxSize()
                         .graphicsLayer {
                             // Mirror horizontally for front camera (like a mirror)
-                            scaleX = if (lensFacing == CameraSelector.LENS_FACING_FRONT) -1f else 1f
+                            rotationY = if (isFrontCamera) 180f else 0f
                         },
                 )
             }
