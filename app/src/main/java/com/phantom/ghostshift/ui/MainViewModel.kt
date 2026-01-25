@@ -112,9 +112,9 @@ class MainViewModel(
         val nextSlot = SlotManager.computeNextSlot(domainPhotos)
 
         // Schedule: only meaningful when timer.running and gateOpen
+        // Schedule: only meaningful when timer.running
         val schedule = when {
             !timer.running -> ScheduleResult(ok = false, warn = "ยังไม่เริ่มจับเวลา")
-            !gateOpen -> ScheduleResult(ok = false, warn = "ต้องดาวน์โหลดรูปอย่างน้อย 1 รูปเพื่อเริ่มตารางแจ้งเตือน")
             else -> ScheduleCalculator.computeScheduleExactFit(domainPhotos, timer)
         }
 
@@ -185,11 +185,11 @@ class MainViewModel(
         val schedule = state.schedule
         val gateOpen = state.gateOpen
 
-        // Strict: no alarm if not running or gated
+        // Strict: no alarm if not running OR gate not open (matches Web T1)
         val shouldHaveAlarm =
             timer.running &&
-            gateOpen &&
             schedule.ok &&
+            gateOpen &&  // Restored: Only schedule alarm if at least 1 photo is exported (Gate Open)
             schedule.nextAt != null &&
             schedule.nextTag != null
 

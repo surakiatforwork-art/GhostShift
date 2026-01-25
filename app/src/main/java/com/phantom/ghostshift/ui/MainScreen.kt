@@ -1,6 +1,7 @@
 package com.phantom.ghostshift.ui
 
 import android.net.Uri
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,41 +44,67 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
     val snack = remember { SnackbarHostState() }
 
-    var replaceTargetId by remember { mutableStateOf<Long?>(null) }
-    var confirmDeleteAll by remember { mutableStateOf(false) }
-    var confirmResetTimer by remember { mutableStateOf(false) }
+    // State for Camera/Edit
+    var showCamera by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var editTargetId by remember { mutableStateOf<Long?>(null) } // if null, adding new; if set, replacing
+    
+    // Dialog States
     var gateDialog by remember { mutableStateOf(false) }
+    var confirmResetTimer by remember { mutableStateOf(false) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+    
+    // Internal Camera Output
+    fun getOutputDirectory(context: Context): File {
+        val mediaDir = context.externalMediaDirs.firstOrNull()?.let {
+            File(it, "GhostShiftPhotos").apply { mkdirs() }
+        }
+        return if (mediaDir != null && mediaDir.exists()) mediaDir else context.filesDir
+    }
 
-    // Photo Picker (Add / Replace)
-    val pickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
-
-        val rid = replaceTargetId
+    // Handlers
+    fun onPhotoCaptured(uri: Uri) {
+        showCamera = false
+        val rid = editTargetId
         if (rid != null) {
             viewModel.replacePhoto(rid, uri)
-            replaceTargetId = null
+            editTargetId = null
         } else {
             viewModel.addPhotoFromPicker(uri)
         }
     }
 
-    // Camera Support
-    var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
-    
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success && tempCameraUri != null) {
-            viewModel.addPhotoFromPicker(tempCameraUri!!)
-        }
-    }
-
+    // Permission launcher for Camera
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { params ->
-        // user can retry
+    ) { isGranted ->
+        if (isGranted) showCamera = true
     }
 
+    fun launchCamera(targetId: Long? = null) {
+        editTargetId = targetId
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+             showCamera = true
+        } else {
+             permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+    
+    // Gallery Launcher
+    val pickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val rid = editTargetId
+        if (rid != null) {
+            viewModel.replacePhoto(rid, uri)
+            editTargetId = null
+        } else {
+            viewModel.addPhotoFromPicker(uri)
+        }
+    }
+    
+    // Notification Permission (Alarm)
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -89,15 +116,33 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    fun launchCamera() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            val file = File.createTempFile("cam_", ".jpg", context.cacheDir)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            tempCameraUri = uri
-            cameraLauncher.launch(uri)
-        } else {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        }
+    if (showCamera) {
+        CameraScreen(
+            outputDirectory = getOutputDirectory(context),
+            onImageCaptured = { uri -> onPhotoCaptured(uri) },
+            onClose = { showCamera = false }
+        )
+        return // Show only camera
+    }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("Choose Option") },
+            text = { Text("Take a new photo or choose from gallery?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showEditDialog = false
+                    launchCamera(editTargetId)
+                }) { Text("Camera") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showEditDialog = false
+                    pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) { Text("Gallery") }
+            }
+        )
     }
 
     Scaffold(
@@ -125,22 +170,18 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             StickyBottomBar(
                 state = state,
                 onStart = {
-                    // UI-level guard
-                    if (!state.gateOpen) {
-                        gateDialog = true
+                    // Web T1: Start is NOT gated. Alarm is gated in VM.
+                    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else {
-                        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } else {
-                            viewModel.startTimer910()
-                        }
+                        viewModel.startTimer910()
                     }
                 },
                 onCam = {
                     launchCamera()
                 },
                 onUpload = {
-                    replaceTargetId = null
+                    editTargetId = null
                     pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }
             )
@@ -167,8 +208,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     photo = photo,
                     isDownloaded = false,
                     onEdit = {
-                        replaceTargetId = photo.id
-                        pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        editTargetId = photo.id
+                        showEditDialog = true
                     },
                     onDownload = { viewModel.exportPhoto(photo) }
                 )

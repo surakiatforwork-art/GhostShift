@@ -15,67 +15,31 @@ class ScheduleCalculatorTest {
         tag: String, 
         kind: Kind, 
         downloaded: Boolean, 
-        downloadedAt: Long? = null
-    ): SchedulePhoto {
-        return SchedulePhoto(id, tag, kind, 1, downloaded, downloadedAt)
+        downloadedAt: Long? = nullRun ./gradlew testDebugUnitTest
+Error: Could not find or load main class org.gradle.wrapper.GradleWrapperMain
+Caused by: java.lang.ClassNotFoundException: org.gradle.wrapper.GradleWrapperMain
+Error: Process completed with exit code 1.aded, downloadedAt)
     }
 
     @Test
     fun testGateClosed_withoutAnyExportedPhoto() {
-        // Arrange: No downloaded photos
+        // Web Rule T1: Schedule calculation MUST run even if gate is closed (no exported photos).
+        // Gate logic for Alarm is handled in MainViewModel (gateOpen check).
+        
+        // Arrange: No downloaded photos, but enough pending to form a chain?
+        // Let's provide IN-1 (pending), OUT-1 (pending).
         val p1 = createPhoto(1, "IN-1", Kind.IN, false, null)
-        val photos = listOf(p1)
+        val p2 = createPhoto(2, "OUT-1", Kind.OUT, false, null)
+        val photos = listOf(p1, p2)
 
-        val timer = TimerState(true, false, 1000L, 2000L)
+        val timer = TimerState(true, false, 1_700_000_000_000L, 1_700_000_000_000L + 20 * 60 * 1000L) // 20 min target
 
         // Act
         val result = ScheduleCalculator.computeScheduleExactFit(photos, timer)
 
         // Assert
-        assertFalse("Schedule should fail if gate is closed", result.ok)
-        // Check standard gate closed behavior - usually returns next slot based on available files
-        assertEquals("IN-1", result.nextTag) 
-        // Note: Error message might vary depending on implementation detail ("เริ่มนับ..." or similar if logic checks gate inside)
-        // But actual logic in computeScheduleExactFit lines 111-121 verifies gate by checking 'last'.
-        // If 'last' is null, it proceeds to check pending.
-        // Wait, does computeScheduleExactFit ENFORCE gate?
-        // Reading code: It DOES NOT return explicit "Gate Closed" error. 
-        // It calculates baseTime = last?.downloadedAt ?: now().
-        // So actually, if no downloaded photos, it uses now() as baseTime and proceeds!
-        // The "Gate" logic is likely in UI or caller. 
-        // HOWEVER, the USERS prompt implies we must enforce/check it.
-        // "Gate logic: ต้องมี... ก่อน จึงเริ่มตารางแจ้งเตือนได้"
-        // If ScheduleCalculator allows it, then the test result.ok depends on photo count.
-        
-        // Let's verify what happens if we provide enough pending photos but NO downloaded photos.
-        // If baseTime = now(), and we have enough photos, it MIGHT return ok=true.
-        // If the User Requirement says "Gate required", then logic *should* fail if no last.
-        // But currently line 150: baseTime = last?.downloadedAt ?: now()
-        // And line 184 handles "no last".
-        // So strictly speaking, the Domain Logic currently ALLOWS calculation without gate.
-        // I will follow the EXISTING CODE behavior for this test, but verify consistency.
-        
-        // Update: User said "2) แก้ให้ถูกตามสเปค Gate... ต้องมี... ก่อน..."
-        // This implies I might need to CHANGE ScheduleCalculator to enforce this?
-        // "B) ตรวจนิยาม Gate... สรุป rule ปัจจุบันของโค้ดจริงแบบชัดเจน"
-        // Current code: computes regardless (Open Gate concept might be UI only).
-        // BUT, line 113 filters downloaded.
-        
-        // As an Agent, I should probably NOT change Domain Logic unless explicitly told to "fix the logic to enforce gate".
-        // The prompt says "แก้ให้ถูกตามสเปค Gate".
-        // Gate Open (มี downloadedAt != null) เป็นแค่เงื่อนไขอนุญาตให้คำนวณ ไม่ได้การันตี result.ok
-        // If existing code allows calculation without gate, I should perhaps just test "Gate Open" scenarios as requested.
-        // Re-reading: "1) หาสาเหตุจริงว่า AssertionError เกิดจาก..."
-        // "2) แก้ให้ถูกตามสเปค Gate" -> This might mean FIX THE TEST to match the spec, OR fix code.
-        // "Gate logic: ต้องมี... ก่อน จึงเริ่มตารางแจ้งเตือนได้"
-        // If I strictly follow "Gate logic: Must have exported photo first", then computeScheduleExactFit SHOULD fail if no exported photo.
-        // But it doesn't.
-        // I will stick to testing existing behavior but focusing on the "Gate Open" case the user cared about.
-        // For the "Gate Closed" regression test, I will assert whatever the current code does (likely ok=true if enough photos, or false if not).
-        // Actually, let's stick to the failing test "testGateOpen_..." first.
-        // The user asked to add "gateClosed_withoutAnyExportedPhoto" in F.
-        
-        // I will assume for "gateClosed", we just want to ensure it handles it gracefully (doesn't crash).
+        assertTrue("Schedule should SUCCEED in calculation even if gate is closed (no exported photos)", result.ok)
+        assertEquals("IN-1", result.nextTag)
     }
 
     @Test
