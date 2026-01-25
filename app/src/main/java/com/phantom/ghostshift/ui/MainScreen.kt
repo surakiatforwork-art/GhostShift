@@ -468,17 +468,20 @@ private fun ScheduleBlock(state: MainUiState) {
                 MetricPill(
                     label = "Next",
                     value = nextTag ?: "-",
-                    icon = Icons.Default.Flag
+                    icon = Icons.Default.Flag,
+                    modifier = Modifier.weight(1f)
                 )
                 MetricPill(
                     label = "When",
                     value = if (nextAt != null) fmtTime(nextAt) else "-",
-                    icon = Icons.Default.Schedule
+                    icon = Icons.Default.Schedule,
+                    modifier = Modifier.weight(1f)
                 )
                 MetricPill(
                     label = "Countdown",
                     value = if (countdownMs != null) fmtDuration(countdownMs) else "-",
-                    icon = Icons.Default.Timer
+                    icon = Icons.Default.Timer,
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -674,7 +677,7 @@ private fun MetricPill(
     label: String,
     value: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    modifier: Modifier = Modifier.weight(1f) // default weight
+    modifier: Modifier = Modifier // default empty
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
