@@ -91,22 +91,14 @@ fun CameraScreen(
         preview.setSurfaceProvider(previewView.surfaceProvider)
     }
     
-    // Apply mirror effect when camera changes
-    // Must apply to BOTH PreviewView AND its child (TextureView) for guaranteed mirror
+    // Apply mirror effect when camera changes using CSS transform (like Timestamp)
     LaunchedEffect(lensFacing) {
         val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
         val scale = if (isFront) -1f else 1f
         
-        // Apply to PreviewView itself
+        // Apply to PreviewView using scaleX (similar to CSS transform on video element)
+        // This is the most stable approach used by Timestamp app
         previewView.scaleX = scale
-        
-        // Also apply to child view (TextureView) when it becomes available
-        // This ensures mirror works regardless of internal implementation
-        kotlinx.coroutines.delay(300) // Wait for child to be created
-        val childView = previewView.getChildAt(0)
-        if (childView != null) {
-            childView.scaleX = scale
-        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
