@@ -25,13 +25,20 @@ jobs:
         gradle-version: 8.7
         
     - name: Run Unit Tests
-      run: gradle testDebugUnitTest
+      run: ./gradlew testDebugUnitTest
 
     - name: Build Debug APK
-      run: gradle assembleDebug
+      run: ./gradlew assembleDebug --no-daemon --max-workers=2 --stacktrace
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
         path: app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Upload Heap Dumps
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: heapdumps
+        path: build/heapdumps/**
