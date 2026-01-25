@@ -3,8 +3,9 @@ package com.phantom.ghostshift.ui.theme
 import androidx.compose.ui.graphics.Color
 
 val MintBg = Color(0xFFF6FFFB)
-val MintCard = Color(0xFFFFFFFF)
+val MintCardBg = Color(0xFFFFFFFF)
 val MintLine = Color(0xFFD7EFE7) // Added
+val GradientPrimary = listOf(Color(0xFF1FBF9A), Color(0xFF159677))
 val MintText = Color(0xFF0E2A23)
 val MintMuted = Color(0xFF557C72)
 val MintMuted2 = Color(0xFF7AA39A)

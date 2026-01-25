@@ -26,7 +26,7 @@ fun MintCard(
         modifier = modifier
             .shadow(10.dp, RoundedCornerShape(18.dp), spotColor = MintShadow)
             .clip(RoundedCornerShape(18.dp))
-            .background(MintCard)
+            .background(MintCardBg)
             .border(1.dp, MintLine, RoundedCornerShape(18.dp))
             .padding(14.dp),
         content = content
@@ -76,7 +76,7 @@ fun MintButton(
     } else if (danger) {
         androidx.compose.ui.graphics.SolidColor(Color(0xFFFFF1F1))
     } else {
-        androidx.compose.ui.graphics.SolidColor(MintCard)
+        androidx.compose.ui.graphics.SolidColor(MintCardBg)
     }
     
     val border = if (primary) null else if (danger) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD1D1)) else androidx.compose.foundation.BorderStroke(1.dp, MintLine)

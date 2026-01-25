@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -202,7 +204,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onDismissRequest = { confirmDeleteAll = false },
             title = { Text("ล้างข้อมูลทั้งหมด") },
             text = { Text("จะลบรูป/ข้อมูลทั้งหมด และรีเซ็ตตัวจับเวลา/การแจ้งเตือนทั้งหมด\n\nยืนยันหรือไม่?") },
-            containerColor = MintCard,
+            containerColor = MintCardBg,
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -226,7 +228,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onDismissRequest = { confirmResetTimer = false },
             title = { Text("รีเซ็ตตัวจับเวลา") },
             text = { Text("จะหยุดการจับเวลาและยกเลิกการแจ้งเตือน (Alarm) ทั้งหมด\n\nยืนยันหรือไม่?") },
-            containerColor = MintCard,
+            containerColor = MintCardBg,
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -256,7 +258,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         "หมายเหตุ: คุณยังสามารถเพิ่ม/แก้รูปได้ตามปกติ แต่การตั้ง Alarm จะยังไม่เริ่มจนกว่าจะ Export อย่างน้อย 1 รูป"
                 )
             },
-            containerColor = MintCard,
+            containerColor = MintCardBg,
             confirmButton = {
                 TextButton(onClick = { gateDialog = false }, colors = ButtonDefaults.textButtonColors(contentColor = MintAccent)) { Text("เข้าใจแล้ว") }
             }
@@ -306,7 +308,7 @@ fun StatusHeader(
                 }
 
                 val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
-                MintBadge(text = badgeText, tone = if (state.gateOpen) "ok" else "wait")
+                MintBadge(text = badgeText, type = if (state.gateOpen) "ok" else "wait")
             }
 
             // Row 2: Core status line
@@ -338,8 +340,7 @@ fun StatusHeader(
                                 )
                             },
                             colors = AssistChipDefaults.assistChipColors(
-                                disabledLabelColor = MintMuted2,
-                                disabledLeadingIconColor = MintMuted2
+                                disabledLabelColor = MintMuted2
                             )
                         )
                     }
@@ -450,7 +451,7 @@ private fun ScheduleBlock(state: MainUiState) {
             Spacer(Modifier.weight(1f))
 
             val alarmTone = if (state.alarmActive) "ok" else "wait"
-            MintBadge(text = if (state.alarmActive) "ALARM ON" else "ALARM OFF", tone = alarmTone)
+            MintBadge(text = if (state.alarmActive) "ALARM ON" else "ALARM OFF", type = alarmTone)
         }
 
         if (!schedule.ok) {
@@ -494,7 +495,7 @@ fun StickyBottomBar(
     Surface(
         tonalElevation = 4.dp,
         shadowElevation = 8.dp,
-        color = MintCard // Make it distinct
+        color = MintCardBg // Make it distinct
     ) {
         Column {
             Divider(color = MintLine, thickness = 1.dp)
@@ -554,7 +555,7 @@ private fun SectionHeaderCard(
                 color = MintText,
                 modifier = Modifier.weight(1f)
             )
-            MintBadge(text = "$count", tone = if (count > 0) "ok" else "wait")
+            MintBadge(text = "$count", type = if (count > 0) "ok" else "wait")
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -601,9 +602,9 @@ private fun PhotoCard(
                     )
 
                     if (isDownloaded) {
-                        MintBadge(text = "EXPORTED", tone = "ok")
+                        MintBadge(text = "EXPORTED", type = "ok")
                     } else {
-                        MintBadge(text = "PENDING", tone = "wait")
+                        MintBadge(text = "PENDING", type = "wait")
                     }
                 }
 
@@ -667,57 +668,18 @@ private fun PhotoCard(
    File-private Mint helpers
 ------------------------------ */
 
-@Composable
-private fun MintCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large, // RoundedCornerShape(16.dp) usually
-        colors = CardDefaults.cardColors(
-            containerColor = MintCard,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            content = content
-        )
-    }
-}
-
-@Composable
-private fun MintBadge(text: String, tone: String) {
-    // Explicit color mapping
-    val (bg, fg) = when (tone) {
-        "ok" -> MintOkBg to MintOkText
-        "wait" -> MintWaitBg to MintWaitText
-        "err" -> MintErrBg to MintErrText
-        else -> MintSoft to MintText
-    }
-    Surface(
-        color = bg,
-        contentColor = fg,
-        shape = MaterialTheme.shapes.small
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
 
 @Composable
 private fun MetricPill(
     label: String,
     value: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier.weight(1f) // default weight
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MintSoft,
-        modifier = Modifier.weight(1f)
+        modifier = modifier
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
