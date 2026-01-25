@@ -271,9 +271,10 @@ private fun takePhoto(
                             android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
                         }
                         
-                        // Mirror horizontally for front camera (like a mirror)
+                        // For front camera: mirror horizontally and rotate 180° to fix upside-down
                         if (isFrontFacing) {
                             matrix.preScale(-1f, 1f)
+                            matrix.postRotate(180f)
                         }
                         
                         // Apply transformations
