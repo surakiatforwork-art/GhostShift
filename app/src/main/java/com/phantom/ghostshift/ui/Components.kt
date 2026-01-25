@@ -20,13 +20,14 @@ import com.phantom.ghostshift.ui.theme.*
 @Composable
 fun MintCard(
     modifier: Modifier = Modifier,
+    containerColor: Color = MintCardBg,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
         modifier = modifier
             .shadow(10.dp, RoundedCornerShape(18.dp), spotColor = MintShadow)
             .clip(RoundedCornerShape(18.dp))
-            .background(MintCardBg)
+            .background(containerColor)
             .border(1.dp, MintLine, RoundedCornerShape(18.dp))
             .padding(14.dp),
         content = content

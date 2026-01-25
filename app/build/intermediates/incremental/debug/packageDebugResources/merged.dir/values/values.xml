@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GhostShift</string>
+    <string name="channel_desc_alarm">แจ้งเตือน Check In / Check Out</string>
+    <string name="channel_name_alarm">Alarm</string>
+    <string name="locked">LOCKED</string>
+    <string name="ready">READY</string>
+    <string name="start_timer">⏱️ เริ่มนับเวลา</string>
+    <string name="stop_timer">สิ้นสุด %s</string>
+    <string name="unlocked">UNLOCKED</string>
+    <style name="Theme.GhostShift" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#f6fffb</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

@@ -14,6 +14,12 @@ object ScheduleCalculator {
 
     data class SolveResult(val ok: Boolean, val a: Double?, val b: Double?)
 
+    data class ScheduleItem(
+        val tag: String,
+        val planAt: Long,
+        val kind: Kind
+    )
+
     // Ported from JS: solveExactAB
     fun solveExactAB(totalMin: Double, nIn: Int, nOut: Int): SolveResult {
         if (nIn == 0 && nOut == 0) return SolveResult(false, null, null)
@@ -233,12 +239,20 @@ object ScheduleCalculator {
                      }
                  }
              }
+
+             
+             // Convert map to list for UI
+             val items = chain.map { p ->
+                 ScheduleItem(p.tag, planMap[p.tag] ?: 0L, p.kind)
+             }
+             
              return ScheduleResult(
                  ok = false,
                  error = errorMsg,
                  nextTag = nextTag,
                  nextAt = planMap[chain[0].tag],
-                 planAtByTag = planMap
+                 planAtByTag = planMap,
+                 items = items
              )
         }
 
@@ -268,7 +282,7 @@ object ScheduleCalculator {
         
         val finalGaps = distributeMsToMatchTotal(rawGaps, kinds, totalMs)
         
-        // Final Plan Build
+     // Final Plan Build
         val planMap = mutableMapOf<String, Long>()
         var t = baseTime
         if (last != null) {
@@ -284,12 +298,18 @@ object ScheduleCalculator {
              }
         }
         
+        // Convert map to list for UI
+        val items = chain.map { p ->
+            ScheduleItem(p.tag, planMap[p.tag] ?: 0L, p.kind)
+        }
+        
         return ScheduleResult(
             ok = true,
             warn = if (!solve.ok) "เฉลี่ยแบบ IN<OUT เป๊ะไม่ได้ (ใช้ค่าใกล้เคียง)" else "",
             nextTag = nextTag,
             nextAt = planMap[chain[0].tag],
-            planAtByTag = planMap
+            planAtByTag = planMap,
+            items = items
         )
     }
 }

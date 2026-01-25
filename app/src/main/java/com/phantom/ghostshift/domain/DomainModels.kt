@@ -38,5 +38,6 @@ data class ScheduleResult(
     val warn: String = "",
     val nextTag: String? = null,
     val nextAt: Long? = null,
-    val planAtByTag: Map<String, Long> = emptyMap()
+    val planAtByTag: Map<String, Long> = emptyMap(),
+    val items: List<ScheduleCalculator.ScheduleItem> = emptyList()
 )

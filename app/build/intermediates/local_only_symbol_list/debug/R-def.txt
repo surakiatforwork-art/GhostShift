@@ -1,0 +1,19 @@
+R_DEF: Internal format may change without notice
+local
+drawable app_logo
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+string channel_desc_alarm
+string channel_name_alarm
+string locked
+string ready
+string start_timer
+string stop_timer
+string unlocked
+style Theme.GhostShift
+xml backup_rules
+xml data_extraction_rules
+xml file_paths

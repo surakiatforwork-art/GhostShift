@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.phantom.ghostshift.ScheduleCalculatorTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-01-25T08:35:30" hostname="DESKTOP-K" time="0.036">
+  <properties/>
+  <testcase name="testGateOpen_withDownloadedPhoto_InsufficientPhotos" classname="com.phantom.ghostshift.ScheduleCalculatorTest" time="0.032"/>
+  <testcase name="testGateOpen_withDownloadedPhoto_SufficientPhotos" classname="com.phantom.ghostshift.ScheduleCalculatorTest" time="0.002"/>
+  <testcase name="testGateClosed_withoutAnyExportedPhoto" classname="com.phantom.ghostshift.ScheduleCalculatorTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -125,6 +125,17 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         return // Show only camera
     }
 
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        SettingsScreen(
+            state = state,
+            onSoundSelected = { uri -> viewModel.setSound(uri) },
+            onBack = { showSettings = false }
+        )
+        return
+    }
+
     if (showEditDialog) {
         AlertDialog(
             onDismissRequest = { showEditDialog = false },
@@ -163,7 +174,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 },
                 onDeleteAll = { confirmDeleteAll = true },
                 onDownloadNext = { viewModel.exportNextPhoto() },
-                onRequestGateHelp = { gateDialog = true }
+                onRequestGateHelp = { gateDialog = true },
+                onSettings = { showSettings = true }
             )
         },
         bottomBar = {
@@ -204,9 +216,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
 
             items(state.pendingPhotos, key = { it.id }) { photo ->
+                val dueAt = state.schedule.planAtByTag[photo.tag]
                 PhotoCard(
                     photo = photo,
                     isDownloaded = false,
+                    dueAt = dueAt,
+                    currentTime = state.currentTime,
                     onEdit = {
                         editTargetId = photo.id
                         showEditDialog = true
@@ -224,9 +239,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
 
             items(state.downloadedPhotos, key = { it.id }) { photo ->
+                val dueAt = state.schedule.planAtByTag[photo.tag]
                 PhotoCard(
                     photo = photo,
                     isDownloaded = true,
+                    dueAt = dueAt,
+                    currentTime = state.currentTime,
                     onEdit = {
                         // Spec v1.1: downloaded list generally should not be edited
                     },
@@ -313,7 +331,8 @@ fun StatusHeader(
     onResetTimer: () -> Unit,
     onDeleteAll: () -> Unit,
     onDownloadNext: () -> Unit,
-    onRequestGateHelp: () -> Unit
+    onRequestGateHelp: () -> Unit,
+    onSettings: () -> Unit
 ) {
     Surface(
         tonalElevation = 0.dp,
@@ -350,6 +369,11 @@ fun StatusHeader(
 
                 val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
                 MintBadge(text = badgeText, type = if (state.gateOpen) "ok" else "wait")
+                
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = onSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MintText)
+                }
             }
 
             // Row 2: Core status line
@@ -614,10 +638,16 @@ private fun SectionHeaderCard(
 private fun PhotoCard(
     photo: PhotoEntity,
     isDownloaded: Boolean,
+    dueAt: Long?,
+    currentTime: Long,
     onEdit: () -> Unit,
     onDownload: (() -> Unit)?
 ) {
-    MintCard {
+    val isDue = dueAt != null && currentTime >= dueAt
+    val countdown = if (dueAt != null && dueAt > currentTime) dueAt - currentTime else null
+    val cardColor = if (isDue && !isDownloaded) MintWarn.copy(alpha = 0.1f) else MintCardBg
+
+    MintCard(containerColor = cardColor) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top
@@ -647,6 +677,12 @@ private fun PhotoCard(
 
                     if (isDownloaded) {
                         MintBadge(text = "EXPORTED", type = "ok")
+                    } else if (isDue) {
+                         MintBadge(text = "DUE NOW", type = "error")
+                    } else if (countdown != null) {
+                        // Show localized countdown
+                        val cd = fmtDuration(countdown)
+                        MintBadge(text = "In $cd", type = "wait")
                     } else {
                         MintBadge(text = "PENDING", type = "wait")
                     }
@@ -655,6 +691,9 @@ private fun PhotoCard(
                 val metaLine = buildString {
                     append("idx: ${photo.idx} • ")
                     append(photo.kind)
+                    if (dueAt != null) {
+                        append(" • Plan: ${fmtTime(dueAt)}")
+                    }
                     if (photo.editedAt != null) append(" • edited")
                 }
                 Text(
