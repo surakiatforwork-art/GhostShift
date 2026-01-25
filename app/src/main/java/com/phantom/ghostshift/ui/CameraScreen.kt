@@ -99,6 +99,11 @@ fun CameraScreen(
         val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
         val scale = if (isFront) -1f else 1f
         
+        // Debug: Check what implementation is actually used
+        val childView = previewView.getChildAt(0)
+        val viewType = childView?.javaClass?.simpleName ?: "null"
+        println("CameraScreen: PreviewView child type = $viewType")
+        
         // Apply scaleX to PreviewView - works because COMPATIBLE uses TextureView
         previewView.scaleX = scale
     }
