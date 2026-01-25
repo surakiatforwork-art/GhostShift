@@ -74,35 +74,39 @@ fun CameraScreen(
         )
     }
 
+    // Remember PreviewView instance to apply scaleX directly
+    val previewView = remember {
+        PreviewView(context).apply {
+            this.scaleType = PreviewView.ScaleType.FIT_CENTER
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        }
+    }
+    
+    // Update mirror effect when camera changes
+    LaunchedEffect(lensFacing) {
+        val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
+        previewView.scaleX = if (isFront) -1f else 1f
+    }
+    
+    // Connect preview to PreviewView
+    LaunchedEffect(preview) {
+        preview.setSurfaceProvider(previewView.surfaceProvider)
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // Camera Preview with mirror effect for front camera
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            val isFrontCamera = lensFacing == CameraSelector.LENS_FACING_FRONT
-            key(lensFacing) {
-                AndroidView(
-                    factory = { ctx ->
-                        PreviewView(ctx).apply {
-                            this.scaleType = PreviewView.ScaleType.FIT_CENTER
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            preview.setSurfaceProvider(this.surfaceProvider)
-                            // Mirror preview for front camera
-                            scaleX = if (isFrontCamera) -1f else 1f
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { view ->
-                        // Update mirror when camera changes
-                        view.scaleX = if (isFrontCamera) -1f else 1f
-                    }
-                )
-            }
+            AndroidView(
+                factory = { previewView },
+                modifier = Modifier.fillMaxSize()
+            )
             
             // 4:3 Frame Overlay - shows the capture area
             BoxWithConstraints(
