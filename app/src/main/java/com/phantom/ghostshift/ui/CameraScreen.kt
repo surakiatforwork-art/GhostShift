@@ -75,7 +75,7 @@ fun CameraScreen(
     }
 
     // Remember PreviewView instance to apply scaleX directly
-    // Force TEXTURE_VIEW mode for guaranteed mirror support
+    // COMPATIBLE mode uses TextureView which supports scaleX transform
     val previewView = remember {
         PreviewView(context).apply {
             this.scaleType = PreviewView.ScaleType.FIT_CENTER
@@ -83,8 +83,8 @@ fun CameraScreen(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            // Force TextureView for guaranteed scaleX support
-            implementationMode = PreviewView.ImplementationMode.TEXTURE_VIEW
+            // COMPATIBLE uses TextureView internally, which supports scaleX for mirror
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         }
     }
     
@@ -93,12 +93,13 @@ fun CameraScreen(
         preview.setSurfaceProvider(previewView.surfaceProvider)
     }
     
-    // Apply mirror effect when camera changes - now with TextureView guaranteed
+    // Apply mirror effect when camera changes
+    // COMPATIBLE mode uses TextureView which supports scaleX transform for mirror
     LaunchedEffect(lensFacing) {
         val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
         val scale = if (isFront) -1f else 1f
         
-        // Apply to PreviewView - guaranteed to work with TEXTURE_VIEW mode
+        // Apply scaleX to PreviewView - works because COMPATIBLE uses TextureView
         previewView.scaleX = scale
     }
 
