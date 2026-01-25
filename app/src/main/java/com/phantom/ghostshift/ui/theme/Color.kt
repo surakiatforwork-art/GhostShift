@@ -1,3 +1,7 @@
+package com.phantom.ghostshift.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
 val MintBg = Color(0xFFF6FFFB)
 val MintCard = Color(0xFFFFFFFF)
 val MintLine = Color(0xFFD7EFE7) // Added
