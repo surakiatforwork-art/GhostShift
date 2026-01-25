@@ -38,21 +38,36 @@ class AlarmScheduler(private val context: Context) {
         )
 
         try {
-            // Use setAlarmClock or setExactAndAllowWhileIdle
-            // setAlarmClock is strongest for visibility (shows icon) but strict exact.
-            // setExactAndAllowWhileIdle is good for background w/o icon.
-            // JS version uses "Exact".
-            // Let's use setExactAndAllowWhileIdle.
+            // Use setAlarmClock for maximum reliability when app is killed
+            // setAlarmClock shows system icon and survives app termination
+            // setExactAndAllowWhileIdle is fallback for older Android
             
             // Ensure future
             if (dueAtMs <= System.currentTimeMillis()) return 
 
-            alarmManager?.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                dueAtMs,
-                pendingIntent
-            )
-            Log.d("AlarmScheduler", "Scheduled $nextTag at $dueAtMs")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                // Create show intent for alarm clock
+                val showIntent = Intent(context, AlarmReceiver::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                val showPendingIntent = PendingIntent.getActivity(
+                    context, 0, showIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                
+                alarmManager?.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(dueAtMs, showPendingIntent),
+                    pendingIntent
+                )
+                Log.d("AlarmScheduler", "Scheduled alarm clock $nextTag at $dueAtMs")
+            } else {
+                // Fallback for older Android
+                alarmManager?.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    dueAtMs,
+                    pendingIntent
+                )
+                Log.d("AlarmScheduler", "Scheduled exact alarm $nextTag at $dueAtMs")
+            }
         } catch (e: SecurityException) {
             Log.e("AlarmScheduler", "Failed to schedule exact alarm", e)
         }

@@ -168,25 +168,66 @@ private fun takePhoto(
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                 // Parity: Front camera must be mirrored (as seen in preview)
                 if (isFrontFacing) {
+                    var bitmap: android.graphics.Bitmap? = null
+                    var flipped: android.graphics.Bitmap? = null
                     try {
-                        val bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath)
-                        val matrix = android.graphics.Matrix().apply { preScale(-1f, 1f) }
-                        val flipped = android.graphics.Bitmap.createBitmap(
-                            bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
-                        )
-                        bitmap.recycle()
-                        java.io.FileOutputStream(photoFile).use { out ->
-                            flipped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                        // Use options to limit memory usage
+                        val options = android.graphics.BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
                         }
-                        flipped.recycle()
+                        android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                        
+                        // Calculate sample size
+                        options.inSampleSize = calculateInSampleSize(options, 1920, 1080)
+                        options.inJustDecodeBounds = false
+                        
+                        bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                        if (bitmap != null) {
+                            val matrix = android.graphics.Matrix().apply { preScale(-1f, 1f) }
+                            flipped = android.graphics.Bitmap.createBitmap(
+                                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                            )
+                            bitmap.recycle()
+                            java.io.FileOutputStream(photoFile).use { out ->
+                                flipped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                            }
+                        }
+                    } catch (e: OutOfMemoryError) {
+                        e.printStackTrace()
+                        // Handle OOM - maybe try with lower quality
                     } catch (e: Exception) {
                         e.printStackTrace()
+                    } finally {
+                        flipped?.recycle()
+                        bitmap?.recycle()
+                        // Force garbage collection
+                        System.gc()
                     }
                 }
                 onImageCaptured(android.net.Uri.fromFile(photoFile))
             }
         }
     )
+}
+
+private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    // Raw height and width of image
+    val height = options.outHeight
+    val width = options.outWidth
+    var inSampleSize = 1
+
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight = height / 2
+        val halfWidth = width / 2
+
+        // Calculate the largest inSampleSize value that is a power of 2 and keeps both
+        // height and width larger than the requested height and width.
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+
+    return inSampleSize
 }
 
 private suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCoroutine { continuation ->
