@@ -15,10 +15,9 @@ class ScheduleCalculatorTest {
         tag: String, 
         kind: Kind, 
         downloaded: Boolean, 
-        downloadedAt: Long? = nullRun ./gradlew testDebugUnitTest
-Error: Could not find or load main class org.gradle.wrapper.GradleWrapperMain
-Caused by: java.lang.ClassNotFoundException: org.gradle.wrapper.GradleWrapperMain
-Error: Process completed with exit code 1.aded, downloadedAt)
+        downloadedAt: Long? = null
+    ): SchedulePhoto {
+        return SchedulePhoto(id, tag, kind, 1, downloaded, downloadedAt)
     }
 
     @Test
@@ -29,10 +28,14 @@ Error: Process completed with exit code 1.aded, downloadedAt)
         // Arrange: No downloaded photos, but enough pending to form a chain?
         // Let's provide IN-1 (pending), OUT-1 (pending).
         val p1 = createPhoto(1, "IN-1", Kind.IN, false, null)
-        val p2 = createPhoto(2, "OUT-1", Kind.OUT, false, null)
+        val p2 = createPhoto(2, "OUT-1", Kind.OUT, false, null) // Fix: idx should match if important, but 1 is ok. Wait, use different Ids.
+        // Actually createPhoto helper implementation I fixed: returns SchedulePhoto(id, tag, kind, 1, ...)
+        // I should fix the helper or just ignore idx if not used. 
+        // Let's just fix the TimerState to use current time.
         val photos = listOf(p1, p2)
 
-        val timer = TimerState(true, false, 1_700_000_000_000L, 1_700_000_000_000L + 20 * 60 * 1000L) // 20 min target
+        val now = System.currentTimeMillis()
+        val timer = TimerState(true, false, now, now + 20 * 60 * 1000L) // 20 min target from NOW
 
         // Act
         val result = ScheduleCalculator.computeScheduleExactFit(photos, timer)
