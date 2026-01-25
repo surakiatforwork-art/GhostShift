@@ -87,4 +87,50 @@ object NotificationHelper {
             e.printStackTrace()
         }
     }
+
+    // Ongoing Notification for Background Reliability (Countdown)
+    fun showOngoingNotification(context: Context, nextAt: Long, nextTag: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            if (manager?.getNotificationChannel("channel_ongoing") == null) {
+                val channel = NotificationChannel(
+                    "channel_ongoing",
+                    "GhostShift Active Timer",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Shows active countdown to next photo"
+                    setShowBadge(false)
+                }
+                manager?.createNotificationChannel(channel)
+            }
+        }
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pending = PendingIntent.getActivity(
+             context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = NotificationCompat.Builder(context, "channel_ongoing")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Timer Running")
+            .setContentText("Next: $nextTag")
+            .setWhen(nextAt)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
+            .setOngoing(true)
+            .setContentIntent(pending)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+
+        try {
+            NotificationManagerCompat.from(context).notify(1002, builder.build())
+        } catch (e: SecurityException) { e.printStackTrace() }
+    }
+
+    fun cancelOngoingNotification(context: Context) {
+        try {
+            NotificationManagerCompat.from(context).cancel(1002)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
 }

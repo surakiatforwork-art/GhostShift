@@ -153,9 +153,10 @@ object ScheduleCalculator {
         }
 
         val targetAt = timer.targetAt
-        var baseTime = last?.downloadedAt ?: now()
-        // baseTime must not be before startAt
-        baseTime = max(baseTime, timer.startAt)
+        // T2 Fix: If last is null (no downloads), baseTime is startAt.
+        // using now() causes the schedule to "slide" forward every calc.
+        val baseTime = last?.downloadedAt ?: timer.startAt!!
+        // Validation handled by caller: timer.startAt checked not null above.
 
         val totalMs = targetAt - baseTime
         if (totalMs <= 0) {

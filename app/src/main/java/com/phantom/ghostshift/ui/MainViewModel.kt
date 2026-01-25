@@ -197,6 +197,7 @@ class MainViewModel(
             if (state.alarmActive) {
                 alarmScheduler.cancel()
                 prefs.saveAlarmState(null, null)
+                // Also cancel ongoing - handled by alarmScheduler.cancel()
             }
             lastAlarmKey = null
             return
@@ -212,6 +213,12 @@ class MainViewModel(
         if (lastAlarmKey != desired) {
             alarmScheduler.scheduleExact(desired.dueAt, desired.tag, desired.soundUri)
             prefs.saveAlarmState(desired.dueAt, desired.tag)
+            
+            // Trigger ongoing notification (needs Context).
+            // AlarmScheduler holds context. Let's add method there or expose it?
+            // Cleanest: add updateOngoing(dueAt, tag) to AlarmScheduler.
+            alarmScheduler.updateOngoing(desired.dueAt, desired.tag)
+            
             lastAlarmKey = desired
         }
     }

@@ -86,6 +86,8 @@ class AlarmReceiver : BroadcastReceiver() {
                              Log.d("AlarmReceiver", "Rescheduling Next: $nTag at $nextAt")
                              alarmScheduler.scheduleExact(nextAt, nTag, currentSound)
                              prefs.saveAlarmState(nextAt, nTag)
+                             // Keep the user informed with ongoing countdown
+                             NotificationHelper.showOngoingNotification(context, nextAt, nTag)
                         } else {
                             // If nextAt is now or past, we might be in a loop or falling behind.
                             // In strict exact fit, nextAt should be future. 

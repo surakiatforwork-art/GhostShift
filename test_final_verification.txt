@@ -1,0 +1,70 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.7/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:clean
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:parseDebugLocalResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugMainManifest
+> Task :app:mergeDebugResources
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :app:javaPreCompileDebug
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:processDebugResources
+> Task :app:kspDebugKotlin
+
+> Task :app:compileDebugKotlin
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/domain/ScheduleCalculator.kt:158:59 Unnecessary non-null assertion (!!) on a non-null receiver of type Long
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/system/AlarmReceiver.kt:47:22 Variable 'currentDueAt' is never used
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/system/AlarmReceiver.kt:47:36 Variable 'currentTag' is never used
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/system/AlarmReceiver.kt:47:48 Variable 'currentChannel' is never used
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/system/AlarmReceiver.kt:76:47 Unnecessary non-null assertion (!!) on a non-null receiver of type Long
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/system/AlarmReceiver.kt:77:46 Unnecessary non-null assertion (!!) on a non-null receiver of type String
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/CameraScreen.kt:52:14 'setTargetAspectRatio(Int): Preview.Builder' is deprecated. Deprecated in Java
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/CameraScreen.kt:57:14 'setTargetAspectRatio(Int): ImageCapture.Builder' is deprecated. Deprecated in Java
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/MainScreen.kt:63:32 'getter for externalMediaDirs: Array<(out) File!>!' is deprecated. Deprecated in Java
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/MainScreen.kt:432:68 Unnecessary non-null assertion (!!) on a non-null receiver of type Long
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/MainScreen.kt:569:31 Elvis operator (?:) always returns the left operand of non-nullable type String
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/SettingsScreen.kt:46:57 'getParcelableExtra(String!): T?' is deprecated. Deprecated in Java
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/SettingsScreen.kt:170:198 Unnecessary non-null assertion (!!) on a non-null receiver of type Long
+w: file:///D:/1111/111119/GhostShiftNative/app/src/main/java/com/phantom/ghostshift/ui/theme/Theme.kt:28:5 Parameter 'darkTheme' is never used
+
+> Task :app:compileDebugJavaWithJavac
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+D:\1111\111119\GhostShiftNative\app\build\generated\ksp\debug\java\com\phantom\ghostshift\data\PhotosDao_Impl.java:37: error: duplicate class: com.phantom.ghostshift.data.PhotosDao_Impl
+public final class PhotosDao_Impl implements PhotosDao {
+             ^
+1 error
+3 warnings
+
+> Task :app:compileDebugJavaWithJavac FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugJavaWithJavac'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --info option to get more log output.
+> Run with --scan to get full insights.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.7/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 4m 19s
+19 actionable tasks: 19 executed

@@ -58,6 +58,10 @@ class AlarmScheduler(private val context: Context) {
         }
     }
 
+    fun updateOngoing(dueAtMs: Long, nextTag: String) {
+        NotificationHelper.showOngoingNotification(context, dueAtMs, nextTag)
+    }
+
     fun cancel() {
         val intent = Intent(context, AlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
@@ -67,6 +71,7 @@ class AlarmScheduler(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager?.cancel(pendingIntent)
+        NotificationHelper.cancelOngoingNotification(context)
     }
 
     companion object {
