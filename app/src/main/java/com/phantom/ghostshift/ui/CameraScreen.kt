@@ -75,6 +75,7 @@ fun CameraScreen(
     }
 
     // Remember PreviewView instance to apply scaleX directly
+    // Force TEXTURE_VIEW mode for guaranteed mirror support
     val previewView = remember {
         PreviewView(context).apply {
             this.scaleType = PreviewView.ScaleType.FIT_CENTER
@@ -82,7 +83,8 @@ fun CameraScreen(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            // Force TextureView for guaranteed scaleX support
+            implementationMode = PreviewView.ImplementationMode.TEXTURE_VIEW
         }
     }
     
@@ -91,13 +93,12 @@ fun CameraScreen(
         preview.setSurfaceProvider(previewView.surfaceProvider)
     }
     
-    // Apply mirror effect when camera changes using CSS transform (like Timestamp)
+    // Apply mirror effect when camera changes - now with TextureView guaranteed
     LaunchedEffect(lensFacing) {
         val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
         val scale = if (isFront) -1f else 1f
         
-        // Apply to PreviewView using scaleX (similar to CSS transform on video element)
-        // This is the most stable approach used by Timestamp app
+        // Apply to PreviewView - guaranteed to work with TEXTURE_VIEW mode
         previewView.scaleX = scale
     }
 
