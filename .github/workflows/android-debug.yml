@@ -20,14 +20,17 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    - name: Bootstrap Gradle Wrapper
+      run: gradle wrapper --gradle-version 8.7
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
     - name: Run Unit Tests
-      run: gradle testDebugUnitTest
+      run: ./gradlew testDebugUnitTest
 
     - name: Build Debug APK
-      run: gradle assembleDebug
+      run: ./gradlew assembleDebug
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v3
