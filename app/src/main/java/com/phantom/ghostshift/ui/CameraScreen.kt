@@ -15,8 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,8 +27,6 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import java.io.File
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
@@ -73,7 +69,8 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     
     var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_FRONT) }
-    var scaleType by remember { mutableStateOf(PreviewView.ScaleType.FILL_CENTER) }
+    var captureLocked by remember { mutableStateOf(false) }
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     // Web: Mirror for front cam is typical. Let's support it or just rely on CameraX default.
     // CameraX PreviewView handles mirroring for front camera automatically in view, but the captured image might not.
     // We will just stick to standard capture for now, focusing on Viewfinder UI parity.
@@ -101,6 +98,11 @@ fun CameraScreen(
         )
     }
 
+    LaunchedEffect(lensFacing, previewViewRef) {
+        val previewView = previewViewRef ?: return@LaunchedEffect
+        applyMirror(previewView, lensFacing == CameraSelector.LENS_FACING_FRONT)
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // Camera Preview with mirror effect for front camera
         Box(
@@ -118,15 +120,12 @@ fun CameraScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
+                        preview.setSurfaceProvider(surfaceProvider)
+                        previewViewRef = this
                     }
                 },
                 update = { previewView ->
-                    // 2. Connect preview to PreviewView
-                    preview.setSurfaceProvider(previewView.surfaceProvider)
-                    
-                    // 3. Apply mirror after preview is connected
-                    val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
-                    applyMirror(previewView, isFront)
+                    previewViewRef = previewView
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -223,16 +222,23 @@ fun CameraScreen(
 
             Button(
                 onClick = {
+                    if (captureLocked) return@Button
+                    captureLocked = true
                     takePhoto(
                         filenameFormat = "yyyy-MM-dd-HH-mm-ss-SSS",
                         imageCapture = imageCapture,
                         outputDirectory = outputDirectory,
                         executor = ContextCompat.getMainExecutor(context),
-                        onImageCaptured = onImageCaptured,
-                        onError = { /* Handle error? */ },
+                        onImageCaptured = { uri ->
+                            onImageCaptured(uri)
+                        },
+                        onError = {
+                            captureLocked = false
+                        },
                         isFrontFacing = (lensFacing == CameraSelector.LENS_FACING_FRONT)
                     )
                 },
+                enabled = !captureLocked,
                 modifier = Modifier.size(80.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White)

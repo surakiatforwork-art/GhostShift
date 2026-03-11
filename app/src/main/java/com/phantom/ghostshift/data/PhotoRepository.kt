@@ -8,20 +8,38 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import com.phantom.ghostshift.domain.Kind
+import com.phantom.ghostshift.domain.SlotManager
 import com.phantom.ghostshift.domain.parseTag
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.max
 
 class PhotoRepository(
     private val context: Context,
     private val dao: PhotosDao
 ) {
+    companion object {
+        private const val TAG = "PhotoRepository"
+        private const val EXPORT_FOLDER = "GhostShift"
+
+        internal fun buildExportFileName(tag: String, exportedAt: Long): String {
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }.format(Date(exportedAt))
+            return "${tag}_$stamp.jpg"
+        }
+    }
+
     val allPhotos: Flow<List<PhotoEntity>> = dao.getAllSortedByIdx()
     val pendingPhotos: Flow<List<PhotoEntity>> = dao.getPendingSorted()
     val downloadedPhotos: Flow<List<PhotoEntity>> = dao.getDownloadedSorted()
@@ -164,53 +182,81 @@ class PhotoRepository(
     }
 
     suspend fun exportPhoto(photo: PhotoEntity): Boolean {
+        val firstAttemptAt = System.currentTimeMillis()
+        if (exportPhotoOnce(photo, firstAttemptAt)) {
+            return true
+        }
+
+        // Some OEM MediaStore providers sporadically fail the first insert/write.
+        // A short retry replaces the user's current "double tap" workaround.
+        delay(150)
+        return exportPhotoOnce(photo, System.currentTimeMillis())
+    }
+
+    private suspend fun exportPhotoOnce(photo: PhotoEntity, exportedAt: Long): Boolean {
         return withContext(Dispatchers.IO) {
+            var destUri: Uri? = null
             try {
                 val srcFile = File(photo.filePath)
                 if (!srcFile.exists()) return@withContext false
 
-                val filename = "${photo.tag}.jpg"
-                
+                val filename = buildExportFileName(photo.tag, exportedAt)
+
                 val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(MediaStore.MediaColumns.MIME_TYPE, photo.mime)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/GhostShift")
-                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$EXPORT_FOLDER")
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
                 }
 
                 val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                    MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 } else {
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI // Fallback to Pictures/images on old android?
                 }
-                
-                val destUri = context.contentResolver.insert(collection, values) ?: return@withContext false
 
-                context.contentResolver.openOutputStream(destUri).use { out ->
+                val resolver = context.contentResolver
+                destUri = resolver.insert(collection, values) ?: return@withContext false
+
+                val output = resolver.openOutputStream(destUri)
+                    ?: throw IllegalStateException("Cannot open output stream for $destUri")
+                output.use { out ->
                     srcFile.inputStream().use { input ->
-                        input.copyTo(out!!)
+                        input.copyTo(out)
                     }
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    context.contentResolver.update(destUri, values, null, null)
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    resolver.update(destUri, values, null, null)
                 }
-                
-                // Mark downloaded if first time
-                if (!photo.downloaded) {
-                    val updated = photo.copy(downloaded = true, downloadedAt = System.currentTimeMillis())
+
+                // Keep the original first-export timestamp when it already exists,
+                // but repair legacy rows where only the boolean was out of sync.
+                if (!photo.downloaded || photo.downloadedAt == null) {
+                    val updated = photo.copy(
+                        downloaded = true,
+                        downloadedAt = photo.downloadedAt ?: exportedAt
+                    )
                     dao.upsert(updated)
                 }
-                
+
                 true
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Failed to export ${photo.tag}", e)
+                destUri?.let { cleanupFailedExport(it) }
                 false
             }
+        }
+    }
+
+    private fun cleanupFailedExport(uri: Uri) {
+        try {
+            context.contentResolver.delete(uri, null, null)
+        } catch (_: Exception) {
         }
     }
     
@@ -218,6 +264,49 @@ class PhotoRepository(
         withContext(Dispatchers.IO) {
             try { File(photo.filePath).delete() } catch (_: Exception) {}
             dao.delete(photo)
+        }
+    }
+
+    suspend fun deletePendingPhotoAndShift(photoId: Long): Boolean {
+        return withContext(Dispatchers.IO) {
+            val target = dao.getById(photoId) ?: return@withContext false
+            if (target.downloadedAt != null) return@withContext false
+
+            try { File(target.filePath).delete() } catch (_: Exception) {}
+            dao.delete(target)
+
+            val allAfterDelete = dao.getAllSortedByIdxOnce().sortedBySlot()
+            val pendingAfterDelete = allAfterDelete.filter { it.downloadedAt == null }
+            resequencePendingList(allAfterDelete, pendingAfterDelete)
+            true
+        }
+    }
+
+    suspend fun reorderPendingByIds(orderedPendingIds: List<Long>): Boolean {
+        return withContext(Dispatchers.IO) {
+            val all = dao.getAllSortedByIdxOnce().sortedBySlot()
+            val pending = all.filter { it.downloadedAt == null }
+            if (pending.isEmpty()) return@withContext false
+
+            val pendingById = pending.associateBy { it.id }
+            val orderedDistinctIds = orderedPendingIds.distinct()
+            val orderedIdSet = orderedDistinctIds.toSet()
+
+            val reorderedPending = mutableListOf<PhotoEntity>()
+            for (id in orderedDistinctIds) {
+                val p = pendingById[id] ?: continue
+                reorderedPending.add(p)
+            }
+            for (p in pending) {
+                if (p.id !in orderedIdSet) reorderedPending.add(p)
+            }
+
+            val originalIds = pending.map { it.id }
+            val targetIds = reorderedPending.map { it.id }
+            if (originalIds == targetIds) return@withContext false
+
+            resequencePendingList(all, reorderedPending)
+            true
         }
     }
     
@@ -228,6 +317,36 @@ class PhotoRepository(
             // Better: getAll, delete files, clear DB.
             // For now just dao.deleteAll() to keep simple, but TODO clean up files.
             dao.deleteAll()
+        }
+    }
+
+    private fun List<PhotoEntity>.sortedBySlot(): List<PhotoEntity> {
+        return this.sortedWith(compareBy<PhotoEntity> { it.idx }.thenBy { if (it.kind == Kind.IN) 0 else 1 })
+    }
+
+    private fun nextPendingStartTag(allSorted: List<PhotoEntity>): String {
+        val lastDownloaded = allSorted
+            .filter { it.downloadedAt != null }
+            .sortedBy { it.downloadedAt }
+            .lastOrNull()
+
+        return if (lastDownloaded != null) {
+            SlotManager.nextTagInSequence(lastDownloaded.tag) ?: "IN-1"
+        } else {
+            "IN-1"
+        }
+    }
+
+    private suspend fun resequencePendingList(allSorted: List<PhotoEntity>, pendingOrdered: List<PhotoEntity>) {
+        if (pendingOrdered.isEmpty()) return
+
+        var nextTag = nextPendingStartTag(allSorted)
+        for (photo in pendingOrdered) {
+            val parsed = nextTag.parseTag() ?: break
+            val (kind, idx) = parsed
+            val updated = photo.copy(tag = nextTag, kind = kind, idx = idx)
+            dao.upsert(updated)
+            nextTag = SlotManager.nextTagInSequence(nextTag) ?: break
         }
     }
 }

@@ -2,6 +2,7 @@ package com.phantom.ghostshift.ui
 
 import android.net.Uri
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,7 +39,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import java.io.File
 
 @Composable
@@ -57,6 +58,32 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var gateDialog by remember { mutableStateOf(false) }
     var confirmResetTimer by remember { mutableStateOf(false) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
+    var confirmDeletePendingPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
+
+    // Pending reorder state
+    var isReorderMode by remember { mutableStateOf(false) }
+    var pendingPhotosUi by remember { mutableStateOf(state.pendingPhotos) }
+
+    LaunchedEffect(state.pendingPhotos, isReorderMode) {
+        if (!isReorderMode) {
+            pendingPhotosUi = state.pendingPhotos
+        }
+    }
+
+    BackHandler(enabled = isReorderMode) {
+        isReorderMode = false
+    }
+
+    fun movePending(fromIndex: Int, toIndex: Int) {
+        if (fromIndex !in pendingPhotosUi.indices || toIndex !in pendingPhotosUi.indices) return
+        if (fromIndex == toIndex) return
+        val updated = pendingPhotosUi.toMutableList().apply {
+            val item = removeAt(fromIndex)
+            add(toIndex, item)
+        }
+        pendingPhotosUi = updated
+        viewModel.reorderPending(updated.map { it.id })
+    }
     
     // Internal Camera Output
     fun getOutputDirectory(context: Context): File {
@@ -94,8 +121,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
     
-    // Gallery Launcher
-    val pickerLauncher = rememberLauncherForActivityResult(
+    // Gallery Launcher for single-select (replace/edit)
+    val singlePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -106,6 +133,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         } else {
             viewModel.addPhotoFromPicker(uri)
         }
+    }
+
+    // Gallery launcher for multi-select (add)
+    val multiPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 100)
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        viewModel.addPhotosFromPicker(uris)
     }
     
     // Notification Permission (Alarm)
@@ -138,6 +173,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         SettingsScreen(
             state = state,
             onSoundSelected = { uri -> viewModel.setSound(uri) },
+            onTargetTimeSelected = { targetAt -> viewModel.setTargetTime(targetAt) },
             onBack = { showSettings = false }
         )
         return
@@ -192,7 +228,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             dismissButton = {
                 TextButton(onClick = {
                     showEditDialog = false
-                    pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    singlePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }) { Text("Gallery") }
             }
         )
@@ -233,7 +269,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 },
                 onUpload = {
                     editTargetId = null
-                    pickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    multiPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }
             )
         }
@@ -249,23 +285,43 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             item {
                 SectionHeaderCard(
                     title = "Pending (ยังไม่ Export)",
-                    count = state.pendingPhotos.size,
-                    hint = if (state.pendingPhotos.isEmpty()) "ยังไม่มีรายการ Pending" else "แตะรูปเพื่อดูเต็มจอ / กด Edit เพื่อแก้ไข"
+                    count = pendingPhotosUi.size,
+                    hint = if (pendingPhotosUi.isEmpty()) "ยังไม่มีรายการ Pending" else "กดปุ่มจัดเรียงเพื่อสลับลำดับด้วยลูกศรขึ้น/ลง",
+                    actionText = if (isReorderMode) "เสร็จสิ้น" else "จัดเรียง",
+                    onAction = {
+                        val nextMode = !isReorderMode
+                        isReorderMode = nextMode
+                        if (nextMode) {
+                            confirmDeletePendingPhoto = null
+                            showEditDialog = false
+                            pendingPhotosUi = state.pendingPhotos
+                        } else {
+                            pendingPhotosUi = state.pendingPhotos
+                        }
+                    }
                 )
             }
 
-            items(state.pendingPhotos, key = { it.id }) { photo ->
+            itemsIndexed(pendingPhotosUi, key = { _, it -> it.id }) { index, photo ->
                 val dueAt = state.schedule.planAtByTag[photo.tag]
                 PhotoCard(
+                    modifier = Modifier.fillMaxWidth(),
                     photo = photo,
                     isDownloaded = false,
                     dueAt = dueAt,
                     currentTime = state.currentTime,
-                    onEdit = {
-                        editTargetId = photo.id
-                        showEditDialog = true
-                    },
-                    onDownload = { viewModel.exportPhoto(photo) },
+                    onEdit = if (!isReorderMode) {
+                        {
+                            editTargetId = photo.id
+                            showEditDialog = true
+                        }
+                    } else null,
+                    onDelete = if (!isReorderMode) { { confirmDeletePendingPhoto = photo } } else null,
+                    reorderMode = isReorderMode,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < pendingPhotosUi.lastIndex,
+                    onMoveUp = if (index > 0) { { movePending(index, index - 1) } } else null,
+                    onMoveDown = if (index < pendingPhotosUi.lastIndex) { { movePending(index, index + 1) } } else null,
                     onPreview = { previewPhoto = photo }
                 )
             }
@@ -285,10 +341,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     isDownloaded = true,
                     dueAt = dueAt,
                     currentTime = state.currentTime,
-                    onEdit = {
-                        // Spec v1.1: downloaded list generally should not be edited
-                    },
-                    onDownload = null,
+                    onEdit = null,
+                    onDelete = null,
                     onPreview = { previewPhoto = photo }
                 )
             }
@@ -317,6 +371,31 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             dismissButton = {
                 TextButton(
                     onClick = { confirmDeleteAll = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                ) { Text("ยกเลิก") }
+            }
+        )
+    }
+
+    if (confirmDeletePendingPhoto != null) {
+        val target = confirmDeletePendingPhoto!!
+        AlertDialog(
+            onDismissRequest = { confirmDeletePendingPhoto = null },
+            title = { Text("ลบรูป ${target.tag}") },
+            text = { Text("รูปนี้จะถูกลบ และรูป pending ถัดไปจะเลื่อนลำดับมาแทนที่อัตโนมัติ\n\nยืนยันหรือไม่?") },
+            containerColor = MintCardBg,
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDeletePendingPhoto = null
+                        viewModel.deletePendingPhoto(target.id)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                ) { Text("ลบรูป") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmDeletePendingPhoto = null },
                     colors = ButtonDefaults.textButtonColors(contentColor = MintText)
                 ) { Text("ยกเลิก") }
             }
@@ -428,10 +507,11 @@ fun StatusHeader(
                         Spacer(Modifier.width(8.dp))
                         
                         // Phase 1: Absolute Target Time Header
-                        val headerText = if (state.timer.running && state.timer.targetAt != null) {
-                            "Target: ${fmtTime(state.timer.targetAt!!)}"
-                        } else {
-                            "Ready to Start"
+                        val timerTarget = state.timer.targetAt
+                        val headerText = when {
+                            state.timer.running && timerTarget != null -> "Target: ${fmtTime(timerTarget)}"
+                            !state.timer.running && timerTarget != null -> "Preset Target: ${fmtDateTimeShort(timerTarget)}"
+                            else -> "Ready to Start"
                         }
                         
                         Text(
@@ -565,8 +645,13 @@ private fun ScheduleBlock(state: MainUiState) {
         }
 
         if (!schedule.ok) {
+            val scheduleMessage = when {
+                schedule.error.isNotBlank() -> schedule.error
+                schedule.warn.isNotBlank() -> schedule.warn
+                else -> "Schedule waiting..."
+            }
             Text(
-                schedule.warn ?: "Schedule waiting...",
+                scheduleMessage,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MintWarn
             )
@@ -619,9 +704,15 @@ fun StickyBottomBar(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Phase 1: Absolute Target Time in Button
-                val hypotheticTarget = System.currentTimeMillis() + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
-                val btnLabel = if (!state.timer.running) "Start (Finish ${fmtTime(hypotheticTarget)})" else "Running..."
+                // Use preset target from settings when available; fallback to default +9h10m.
+                val defaultTarget = state.currentTime + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
+                val presetTarget = state.timer.targetAt
+                val displayTarget = if (!state.timer.running && presetTarget != null && presetTarget > state.currentTime) {
+                    presetTarget
+                } else {
+                    defaultTarget
+                }
+                val btnLabel = if (!state.timer.running) "Start (Finish ${fmtTime(displayTarget)})" else "Running..."
 
                 Button(
                     onClick = onStart,
@@ -660,7 +751,9 @@ fun StickyBottomBar(
 private fun SectionHeaderCard(
     title: String,
     count: Int,
-    hint: String
+    hint: String,
+    actionText: String? = null,
+    onAction: (() -> Unit)? = null
 ) {
     MintCard {
         Row(
@@ -675,6 +768,12 @@ private fun SectionHeaderCard(
                 modifier = Modifier.weight(1f)
             )
             MintBadge(text = "$count", type = if (count > 0) "ok" else "wait")
+            if (!actionText.isNullOrBlank() && onAction != null) {
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onAction) {
+                    Text(actionText, color = MintAccent)
+                }
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(hint, style = MaterialTheme.typography.bodySmall, color = MintMuted)
@@ -683,19 +782,28 @@ private fun SectionHeaderCard(
 
 @Composable
 private fun PhotoCard(
+    modifier: Modifier = Modifier,
     photo: PhotoEntity,
     isDownloaded: Boolean,
     dueAt: Long?,
     currentTime: Long,
-    onEdit: () -> Unit,
-    onDownload: (() -> Unit)?,
+    onEdit: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+    reorderMode: Boolean = false,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null,
     onPreview: () -> Unit
 ) {
     val isDue = dueAt != null && currentTime >= dueAt
     val countdown = if (dueAt != null && dueAt > currentTime) dueAt - currentTime else null
     val cardColor = if (isDue && !isDownloaded) MintWarn.copy(alpha = 0.1f) else MintCardBg
 
-    MintCard(containerColor = cardColor) {
+    MintCard(
+        modifier = modifier,
+        containerColor = cardColor
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().clickable { onPreview() },
             verticalAlignment = Alignment.Top
@@ -729,7 +837,7 @@ private fun PhotoCard(
                     if (isDownloaded) {
                         MintBadge(text = "EXPORTED", type = "ok")
                     } else if (isDue) {
-                         MintBadge(text = "DUE NOW", type = "error")
+                        MintBadge(text = "DUE NOW", type = "err")
                     } else if (countdown != null) {
                         // Phase 2: Per-Card Countdown
                         val cd = fmtDuration(countdown)
@@ -777,25 +885,54 @@ private fun PhotoCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedButton(
-                        onClick = onEdit,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(0.dp), // fit content
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
-                        shape = MaterialTheme.shapes.small
-                    ) {
-                        Text("Edit", style = MaterialTheme.typography.labelMedium)
-                    }
-
-                    if (!isDownloaded && onDownload != null) {
-                        Button(
-                            onClick = onDownload,
+                    if (!isDownloaded && reorderMode) {
+                        OutlinedButton(
+                            onClick = { onMoveUp?.invoke() },
+                            enabled = canMoveUp && onMoveUp != null,
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(0.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
                             shape = MaterialTheme.shapes.small
                         ) {
-                            Text("Download", style = MaterialTheme.typography.labelMedium)
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move Up")
+                            Spacer(Modifier.width(4.dp))
+                            Text("ขึ้น", style = MaterialTheme.typography.labelMedium)
+                        }
+                        OutlinedButton(
+                            onClick = { onMoveDown?.invoke() },
+                            enabled = canMoveDown && onMoveDown != null,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(0.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move Down")
+                            Spacer(Modifier.width(4.dp))
+                            Text("ลง", style = MaterialTheme.typography.labelMedium)
+                        }
+                    } else {
+                        if (onEdit != null) {
+                            OutlinedButton(
+                                onClick = onEdit,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(0.dp), // fit content
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
+                                shape = MaterialTheme.shapes.small
+                            ) {
+                                Text("Edit", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+
+                        if (!isDownloaded && onDelete != null) {
+                            Button(
+                                onClick = onDelete,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MintDanger, contentColor = Color.White),
+                                shape = MaterialTheme.shapes.small
+                            ) {
+                                Text("Delete", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
                     }
                 }
@@ -853,6 +990,11 @@ private fun fmtTime(ms: Long): String {
 
 private fun fmtDateTime(ms: Long): String {
     val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+    return sdf.format(Date(ms))
+}
+
+private fun fmtDateTimeShort(ms: Long): String {
+    val sdf = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault())
     return sdf.format(Date(ms))
 }
 

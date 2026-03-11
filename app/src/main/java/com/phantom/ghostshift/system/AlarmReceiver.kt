@@ -6,8 +6,6 @@ import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import com.phantom.ghostshift.data.PhotoEntity
-import com.phantom.ghostshift.domain.Kind
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -44,7 +42,6 @@ class AlarmReceiver : BroadcastReceiver() {
                 // Assuming repo has a way to get snapshot or we take first from flow
                 val allPhotos = repo.allPhotos.first() 
                 val timerState = prefs.timerState.first()
-                val (currentDueAt, currentTag, currentChannel) = prefs.alarmState.first() // snapshot current
                 val currentSound = prefs.soundPref.first()
 
                 if (!timerState.running) {
@@ -72,9 +69,9 @@ class AlarmReceiver : BroadcastReceiver() {
                 // Calculate
                 val result = com.phantom.ghostshift.domain.ScheduleCalculator.computeScheduleExactFit(sortedPhotos, timerState)
 
-                if (result.ok && result.nextAt != null && result.nextTag != null) {
-                    val nextAt = result.nextAt!!
-                    val nTag = result.nextTag!!
+                if (result.nextAt != null && result.nextTag != null) {
+                    val nextAt = result.nextAt
+                    val nTag = result.nextTag
 
                     // Gate check: Alarm only if gate is Open (at least 1 download)
                     // (Strict Rule T1 implies Gate logic for Alarms)

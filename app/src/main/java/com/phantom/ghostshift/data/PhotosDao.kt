@@ -11,6 +11,9 @@ interface PhotosDao {
     @Query("SELECT * FROM photos ORDER BY idx ASC, kind ASC") // IN-1, OUT-1, IN-2... strict sort
     fun getAllSortedByIdx(): Flow<List<PhotoEntity>>
 
+    @Query("SELECT * FROM photos ORDER BY idx ASC, kind ASC")
+    suspend fun getAllSortedByIdxOnce(): List<PhotoEntity>
+
     @Query("SELECT * FROM photos WHERE downloaded = 0 ORDER BY idx ASC, kind ASC")
     fun getPendingSorted(): Flow<List<PhotoEntity>>
 

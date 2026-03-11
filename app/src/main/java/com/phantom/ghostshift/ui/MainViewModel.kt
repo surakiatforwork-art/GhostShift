@@ -12,7 +12,6 @@ import com.phantom.ghostshift.domain.SchedulePhoto
 import com.phantom.ghostshift.domain.ScheduleResult
 import com.phantom.ghostshift.domain.SlotManager
 import com.phantom.ghostshift.domain.TimerState
-import com.phantom.ghostshift.domain.UnlockRules
 import com.phantom.ghostshift.system.AlarmScheduler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,6 +67,8 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val _now = MutableStateFlow(System.currentTimeMillis())
+    @Volatile
+    private var exportNextInProgress = false
 
     // cache to avoid rescheduling every time
     private var lastAlarmKey: AlarmKey? = null
@@ -162,7 +163,10 @@ class MainViewModel(
                     // only the fields relevant to alarm scheduling
                     Triple(
                         // shouldSchedule?
-                        state.timer.running && state.gateOpen && state.schedule.ok,
+                        state.timer.running &&
+                            state.gateOpen &&
+                            state.schedule.nextAt != null &&
+                            state.schedule.nextTag != null,
                         // next key inputs
                         AlarmKey(
                             dueAt = state.schedule.nextAt ?: -1L,
@@ -188,7 +192,6 @@ class MainViewModel(
         // Strict: no alarm if not running OR gate not open (matches Web T1)
         val shouldHaveAlarm =
             timer.running &&
-            schedule.ok &&
             gateOpen &&  // Restored: Only schedule alarm if at least 1 photo is exported (Gate Open)
             schedule.nextAt != null &&
             schedule.nextTag != null
@@ -226,7 +229,9 @@ class MainViewModel(
     fun startTimer910() {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
-            val target = now + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
+            val savedTimer = prefs.timerState.first()
+            val defaultTarget = now + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
+            val target = savedTimer.targetAt?.takeIf { it > now } ?: defaultTarget
 
             // If user already exported pairs >= 20 BEFORE starting, do not re-lock.
             val all = repo.allPhotosNowSorted()
@@ -240,6 +245,15 @@ class MainViewModel(
                 targetAt = target
             )
             prefs.saveTimerState(newState)
+        }
+    }
+
+    fun setTargetTime(targetAt: Long) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            if (targetAt <= now) return@launch
+            val current = prefs.timerState.first()
+            prefs.saveTimerState(current.copy(targetAt = targetAt))
         }
     }
 
@@ -271,11 +285,19 @@ class MainViewModel(
     }
 
     fun addPhotoFromPicker(uri: Uri) {
+        addPhotosFromPicker(listOf(uri))
+    }
+
+    fun addPhotosFromPicker(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+
         viewModelScope.launch {
-            val current = (uiState.value.pendingPhotos + uiState.value.downloadedPhotos).sortedBySlot()
-            val mapped = current.map { it.toSchedulePhoto() }
-            val nextTag = SlotManager.computeNextSlot(mapped)
-            repo.addPhotoFromUri(uri, nextTag)
+            for (uri in uris) {
+                val current = repo.allPhotosNowSorted()
+                val mapped = current.map { it.toSchedulePhoto() }
+                val nextTag = SlotManager.computeNextSlot(mapped)
+                repo.addPhotoFromUri(uri, nextTag)
+            }
         }
     }
 
@@ -285,38 +307,64 @@ class MainViewModel(
         }
     }
 
+    fun deletePendingPhoto(photoId: Long) {
+        viewModelScope.launch {
+            repo.deletePendingPhotoAndShift(photoId)
+        }
+    }
+
+    fun reorderPending(photoIdsInOrder: List<Long>) {
+        if (photoIdsInOrder.isEmpty()) return
+        viewModelScope.launch {
+            repo.reorderPendingByIds(photoIdsInOrder)
+        }
+    }
+
     fun exportPhoto(photo: PhotoEntity) {
         viewModelScope.launch {
-            // First-time export should be driven by downloadedAt, not boolean flag.
-            val wasFirstTime = (photo.downloadedAt == null)
+            exportPhotoInternal(photo)
+        }
+    }
 
-            val ok = repo.exportPhoto(photo)
-            if (!ok) return@launch
+    private suspend fun exportPhotoInternal(photo: PhotoEntity) {
+        // First-time export should be driven by downloadedAt, not boolean flag.
+        val wasFirstTime = (photo.downloadedAt == null)
 
-            // Unlock triggers ONLY on first-time export, and specifically when OUT-20 is first-time exported
-            if (wasFirstTime) {
-                val all = repo.allPhotosNowSorted()
-                val contiguousPairs = computeContiguousExportedPairs(all, maxPairs = 20)
+        val ok = repo.exportPhoto(photo)
+        if (!ok) return
 
-                if (contiguousPairs >= 20) {
-                    val currentTimer = prefs.timerState.stateIn(viewModelScope, SharingStarted.Eagerly, TimerState(false, false, null, null)).value
-                    // Safer: re-read directly (suspend) if you have a Flow-first utility; leaving as current snapshot is ok if timerState is StateFlow in prefs.
-                    // If your prefs.timerState is Flow, consider using .first() here.
+        // Unlock triggers ONLY on first-time export, and specifically when OUT-20 is first-time exported
+        if (wasFirstTime) {
+            val all = repo.allPhotosNowSorted()
+            val contiguousPairs = computeContiguousExportedPairs(all, maxPairs = 20)
 
-                    // Unlock whenever we reach 20 pairs, regardless of which one was last
-                    if (currentTimer.running && currentTimer.locked) {
-                        prefs.saveTimerState(currentTimer.copy(locked = false))
-                    }
+            if (contiguousPairs >= 20) {
+                val currentTimer = prefs.timerState.stateIn(viewModelScope, SharingStarted.Eagerly, TimerState(false, false, null, null)).value
+                // Safer: re-read directly (suspend) if you have a Flow-first utility; leaving as current snapshot is ok if timerState is StateFlow in prefs.
+                // If your prefs.timerState is Flow, consider using .first() here.
+
+                // Unlock whenever we reach 20 pairs, regardless of which one was last
+                if (currentTimer.running && currentTimer.locked) {
+                    prefs.saveTimerState(currentTimer.copy(locked = false))
                 }
             }
         }
     }
 
     fun exportNextPhoto() {
-        // We assume pendingPhotos is already sorted by slot in the UiState because coreState sorts them
-        val next = coreState.value.pendingPhotos.firstOrNull()
-        if (next != null) {
-            exportPhoto(next)
+        if (exportNextInProgress) return
+
+        viewModelScope.launch {
+            exportNextInProgress = true
+            // First-time export should be driven by downloadedAt, not boolean flag.
+            try {
+                val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
+                if (next != null) {
+                    exportPhotoInternal(next)
+                }
+            } finally {
+                exportNextInProgress = false
+            }
         }
     }
 
