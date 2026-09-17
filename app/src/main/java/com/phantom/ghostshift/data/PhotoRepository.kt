@@ -248,12 +248,12 @@ class PhotoRepository(
                     values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                     resolver.update(destUri, values, null, null)
                 }
-                
+
                 if (!photo.downloaded || photo.downloadedAt == null) {
                     val updated = photo.copy(downloaded = true, downloadedAt = photo.downloadedAt ?: exportedAt)
                     dao.upsert(updated)
                 }
-                
+
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to export ${photo.tag}", e)
