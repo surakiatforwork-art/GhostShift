@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import com.phantom.ghostshift.ui.theme.*
 
@@ -21,6 +22,7 @@ import com.phantom.ghostshift.ui.theme.*
 fun MintCard(
     modifier: Modifier = Modifier,
     containerColor: Color = MintCardBg,
+    contentPadding: Dp = 14.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -29,7 +31,7 @@ fun MintCard(
             .clip(RoundedCornerShape(18.dp))
             .background(containerColor)
             .border(1.dp, MintLine, RoundedCornerShape(18.dp))
-            .padding(14.dp),
+            .padding(contentPadding),
         content = content
     )
 }

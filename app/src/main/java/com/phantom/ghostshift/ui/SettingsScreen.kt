@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,6 +44,7 @@ fun SettingsScreen(
     onSoundSelected: (String?) -> Unit,
     onTargetTimeSelected: (Long) -> Unit,
     onScheduleSettingsChanged: (ScheduleSettings) -> Unit,
+    onResetTimer: () -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -161,13 +163,20 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MintMuted
                     )
-                    Button(
-                        onClick = { openTargetPicker() },
-                        colors = ButtonDefaults.buttonColors(containerColor = MintAccent)
-                    ) {
-                        Icon(Icons.Default.Schedule, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("ตั้งเวลา Target")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { openTargetPicker() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent)
+                        ) {
+                            Icon(Icons.Default.Schedule, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("ตั้งเวลา Target")
+                        }
+                        OutlinedButton(onClick = onResetTimer) {
+                            Icon(Icons.Default.RestartAlt, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("รีเซ็ต")
+                        }
                     }
                 }
             }

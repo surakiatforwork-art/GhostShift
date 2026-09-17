@@ -309,6 +309,13 @@ class MainViewModel(
         }
     }
 
+    fun reorderCompletePendingPairs(pairIdsInOrder: List<Long>) {
+        if (pairIdsInOrder.isEmpty()) return
+        viewModelScope.launch {
+            repo.reorderCompletePendingPairs(pairIdsInOrder)
+        }
+    }
+
     fun swapPair(index: Int) {
         viewModelScope.launch { repo.swapPairContents(index) }
     }

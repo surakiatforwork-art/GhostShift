@@ -328,6 +328,45 @@ class PhotoRepository(
         }
     }
 
+    /**
+     * Reorders only complete, unexported pairs. Incomplete/exported pairs retain their slot
+     * so an already exported IN/OUT image can never become paired with a different photo.
+     */
+    suspend fun reorderCompletePendingPairs(orderedPairIds: List<Long>): Boolean {
+        return withContext(Dispatchers.IO) {
+            val all = dao.getAllSortedByIdxOnce().sortedBySlot()
+            val reorderablePairs = all
+                .groupBy { it.idx }
+                .toSortedMap()
+                .mapNotNull { (index, photos) ->
+                    val inPhoto = photos.firstOrNull { it.kind == Kind.IN }
+                    val outPhoto = photos.firstOrNull { it.kind == Kind.OUT }
+                    if (inPhoto != null && outPhoto != null &&
+                        inPhoto.downloadedAt == null && outPhoto.downloadedAt == null
+                    ) {
+                        Triple(index, inPhoto, outPhoto)
+                    } else {
+                        null
+                    }
+                }
+            if (reorderablePairs.size < 2) return@withContext false
+
+            val pairsById = reorderablePairs.associateBy { it.second.id }
+            val requested = orderedPairIds.distinct().mapNotNull(pairsById::get)
+            val requestedIds = requested.map { it.second.id }.toSet()
+            val reordered = requested + reorderablePairs.filter { it.second.id !in requestedIds }
+            if (reordered.map { it.second.id } == reorderablePairs.map { it.second.id }) return@withContext false
+
+            val slots = reorderablePairs.map { it.first }
+            val now = System.currentTimeMillis()
+            slots.zip(reordered).forEach { (slot, pair) ->
+                dao.upsert(pair.second.copy(idx = slot, tag = "IN-$slot", editedAt = now))
+                dao.upsert(pair.third.copy(idx = slot, tag = "OUT-$slot", editedAt = now))
+            }
+            true
+        }
+    }
+
     suspend fun swapPairContents(index: Int): Boolean = withContext(Dispatchers.IO) {
         val all = dao.getAllSortedByIdxOnce()
         val inPhoto = all.firstOrNull { it.idx == index && it.kind == Kind.IN } ?: return@withContext false

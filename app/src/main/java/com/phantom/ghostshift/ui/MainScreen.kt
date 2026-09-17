@@ -9,13 +9,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -43,7 +48,10 @@ import androidx.core.content.ContextCompat
 import java.io.File
 
 private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outPhoto: PhotoEntity?) {
+    val stableId: Long get() = inPhoto?.id ?: outPhoto?.id ?: index.toLong()
     val fullyDownloaded: Boolean get() = inPhoto?.downloadedAt != null && outPhoto?.downloadedAt != null
+    val isReorderable: Boolean get() = inPhoto != null && outPhoto != null &&
+        inPhoto.downloadedAt == null && outPhoto.downloadedAt == null
 }
 
 @Composable
@@ -66,6 +74,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var confirmDeletePendingPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
     var editChoicePair by remember { mutableStateOf<PhotoPair?>(null) }
     var deleteChoicePair by remember { mutableStateOf<PhotoPair?>(null) }
+    var reorderMode by remember { mutableStateOf(false) }
+    var reorderPairs by remember { mutableStateOf<List<PhotoPair>>(emptyList()) }
+    var draggedPairId by remember { mutableStateOf<Long?>(null) }
+    var draggedOffsetY by remember { mutableFloatStateOf(0f) }
+    val listState = rememberLazyListState()
+    val latestReorderPairs by rememberUpdatedState(reorderPairs)
 
     val allPairs = (state.pendingPhotos + state.downloadedPhotos)
         .groupBy { it.idx }
@@ -75,6 +89,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     val pendingPairs = allPairs.filterNot { it.fullyDownloaded }
     val downloadedPairs = allPairs.filter { it.fullyDownloaded }
+    val visiblePendingPairs = if (reorderMode) reorderPairs else pendingPairs
+
+    LaunchedEffect(pendingPairs, reorderMode) {
+        if (!reorderMode) reorderPairs = pendingPairs
+    }
     
     // Internal Camera Output
     fun getOutputDirectory(context: Context): File {
@@ -166,6 +185,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onSoundSelected = { uri -> viewModel.setSound(uri) },
             onTargetTimeSelected = { targetAt -> viewModel.setTargetTime(targetAt) },
             onScheduleSettingsChanged = { settings -> viewModel.saveScheduleSettings(settings) },
+            onResetTimer = { viewModel.resetTimer() },
             onBack = { showSettings = false }
         )
         return
@@ -259,16 +279,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         topBar = {
             StatusHeader(
                 state = state,
-                onResetTimer = {
-                    if (state.isTimerLocked) {
-                        // locked
-                    } else {
-                        confirmResetTimer = true
-                    }
-                },
                 onDeleteAll = { confirmDeleteAll = true },
                 onDownloadNext = { viewModel.exportNextPhoto() },
-                onRequestGateHelp = { gateDialog = true },
                 onSettings = { showSettings = true }
             )
         },
@@ -294,30 +306,110 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 90.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(bottom = 76.dp)
         ) {
             item {
                 SectionHeaderCard(
                     title = "Pending (ยังไม่ Export)",
                     count = pendingPairs.size,
-                    hint = if (pendingPairs.isEmpty()) "ยังไม่มีรายการ Pending" else "แต่ละการ์ดจะแสดง IN ทางซ้าย และ OUT ทางขวา"
+                    hint = when {
+                        pendingPairs.isEmpty() -> "ยังไม่มีรายการ Pending"
+                        reorderMode -> "ลากการ์ดเพื่อเปลี่ยนลำดับ แล้วกด เสร็จสิ้น เพื่อบันทึก"
+                        else -> "แตะรูปเพื่อขยายดู"
+                    },
+                    actionText = if (reorderMode) "เสร็จสิ้น" else "จัดเรียง",
+                    onAction = {
+                        if (reorderMode) {
+                            viewModel.reorderCompletePendingPairs(
+                                reorderPairs.filter { it.isReorderable }.map { it.stableId }
+                            )
+                            reorderMode = false
+                            draggedPairId = null
+                        } else {
+                            reorderPairs = pendingPairs
+                            reorderMode = true
+                        }
+                    }
                 )
             }
 
-            items(pendingPairs, key = { "pending-${it.index}" }) { pair ->
+            items(visiblePendingPairs, key = { "pending-${it.stableId}" }) { pair ->
+                val isDragged = draggedPairId == pair.stableId
+                val reorderModifier = if (reorderMode && pair.isReorderable) {
+                    Modifier
+                        .zIndex(if (isDragged) 1f else 0f)
+                        .graphicsLayer { translationY = if (isDragged) draggedOffsetY else 0f }
+                        .pointerInput(pair.stableId) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggedPairId = pair.stableId
+                                    draggedOffsetY = 0f
+                                },
+                                onDragEnd = {
+                                    draggedPairId = null
+                                    draggedOffsetY = 0f
+                                },
+                                onDragCancel = {
+                                    draggedPairId = null
+                                    draggedOffsetY = 0f
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    draggedOffsetY += dragAmount.y
+                                    val draggedInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                        it.key == "pending-${pair.stableId}"
+                                    } ?: return@detectDragGesturesAfterLongPress
+                                    val draggedCenter = draggedInfo.offset + draggedOffsetY + draggedInfo.size / 2
+                                    // Continue scrolling at the edge so every pending pair is reachable.
+                                    val scrollBy = when {
+                                        draggedCenter < listState.layoutInfo.viewportStartOffset + 72 -> -28f
+                                        draggedCenter > listState.layoutInfo.viewportEndOffset - 72 -> 28f
+                                        else -> 0f
+                                    }
+                                    if (scrollBy != 0f) {
+                                        scope.launch { listState.scrollBy(scrollBy) }
+                                    }
+                                    val targetInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                        val key = item.key as? String
+                                        key?.startsWith("pending-") == true &&
+                                            item.key != draggedInfo.key &&
+                                            latestReorderPairs.firstOrNull { it.stableId == key.removePrefix("pending-").toLongOrNull() }?.isReorderable == true &&
+                                            draggedCenter >= item.offset &&
+                                            draggedCenter <= item.offset + item.size
+                                    } ?: return@detectDragGesturesAfterLongPress
+                                    val targetId = (targetInfo.key as? String)
+                                        ?.removePrefix("pending-")
+                                        ?.toLongOrNull()
+                                        ?: return@detectDragGesturesAfterLongPress
+                                    val from = latestReorderPairs.indexOfFirst { it.stableId == pair.stableId }
+                                    val to = latestReorderPairs.indexOfFirst { it.stableId == targetId }
+                                    if (from >= 0 && to >= 0 && from != to) {
+                                        reorderPairs = latestReorderPairs.toMutableList().apply {
+                                            add(to, removeAt(from))
+                                        }
+                                        draggedOffsetY += draggedInfo.offset - targetInfo.offset
+                                    }
+                                }
+                            )
+                        }
+                } else {
+                    Modifier
+                }
                 PhotoPairCard(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().then(reorderModifier),
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,
                     currentTime = state.currentTime,
-                    onEdit = { editChoicePair = pair },
-                    onDelete = { deleteChoicePair = pair },
-                    onSwap = { viewModel.swapPair(pair.index) },
+                    onEdit = if (reorderMode) null else { { editChoicePair = pair } },
+                    onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
+                    onSwap = if (reorderMode) null else { { viewModel.swapPair(pair.index) } },
+                    reorderMode = reorderMode,
                     onPreview = { previewPhoto = it }
                 )
             }
@@ -338,6 +430,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onEdit = null,
                     onDelete = null,
                     onSwap = null,
+                    reorderMode = false,
                     onPreview = { previewPhoto = it }
                 )
             }
@@ -443,10 +536,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 @Composable
 fun StatusHeader(
     state: MainUiState,
-    onResetTimer: () -> Unit,
     onDeleteAll: () -> Unit,
     onDownloadNext: () -> Unit,
-    onRequestGateHelp: () -> Unit,
     onSettings: () -> Unit
 ) {
     Surface(
@@ -456,12 +547,9 @@ fun StatusHeader(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // Row 1: Title + Badge
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -469,135 +557,52 @@ fun StatusHeader(
                 Column(Modifier.weight(1f)) {
                     Text(
                         "GhostShift",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = MintText,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        "Mint Light • Native Android",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MintMuted
-                    )
                 }
 
                 val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
                 MintBadge(text = badgeText, type = if (state.gateOpen) "ok" else "wait")
-                
                 Spacer(Modifier.width(8.dp))
-                IconButton(onClick = onSettings) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MintText)
+                IconButton(onClick = onDeleteAll, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete all", tint = MintDanger, modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MintText, modifier = Modifier.size(20.dp))
                 }
             }
 
-            // Row 2: Core status line
-            MintCard {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.AccessTime, contentDescription = null, tint = MintText)
-                        Spacer(Modifier.width(8.dp))
-                        
-                        // Phase 1: Absolute Target Time Header
-                        val timerTarget = state.timer.targetAt
-                        val headerText = when {
-                            state.timer.running && timerTarget != null -> "Target: ${fmtTime(timerTarget)}"
-                            !state.timer.running && timerTarget != null -> "Preset Target: ${fmtDateTimeShort(timerTarget)}"
-                            else -> "Ready to Start"
-                        }
-                        
-                        Text(
-                            headerText,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MintText,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        AssistChip(
-                            onClick = { /* display only */ },
-                            enabled = false,
-                            label = { Text("NO LIMIT") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.LockOpen,
-                                    contentDescription = null
-                                )
-                            },
-                            colors = AssistChipDefaults.assistChipColors(
-                                disabledLabelColor = MintMuted2
-                            )
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = if (state.gateOpen) MintAccent else MintMuted2)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (state.gateOpen) "Gate: OPEN" else "Gate: CLOSED",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MintText,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = onRequestGateHelp) { Text("Help?", color = MintAccent) }
-                    }
-
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val target = state.timer.targetAt
+                Column(Modifier.weight(1f)) {
+                    Text("Target", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+                    Text(target?.let(::fmtTime) ?: "ยังไม่ได้ตั้ง", style = MaterialTheme.typography.labelLarge, color = MintText, maxLines = 1)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("เหลือเวลา", style = MaterialTheme.typography.labelSmall, color = MintMuted)
                     Text(
-                        "จำนวนภาพไม่จำกัด และรีเซ็ตเวลาได้ตลอดเวลา",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MintMuted
+                        target?.let { fmtDuration(max(0L, it - state.currentTime)) } ?: "-",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MintAccent,
+                        maxLines = 1
                     )
-
-                    // Schedule block
-                    ScheduleBlock(state = state)
-
-                    Divider(color = MintLine, thickness = 1.dp)
-
-                    // Actions
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Button(
-                            onClick = onDownloadNext,
-                            modifier = Modifier.weight(1.5f),
-                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White),
-                            enabled = state.pendingPhotos.isNotEmpty()
-                        ) {
-                            Icon(Icons.Default.DownloadForOffline, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Download Next")
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = onResetTimer,
-                            enabled = !state.isTimerLocked,
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText)
-                        ) {
-                            Text("Reset")
-                        }
-
-                        OutlinedButton(
-                            onClick = onDeleteAll,
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MintDanger)
-                        ) {
-                            Text("Delete All")
-                        }
-                    }
+                }
+                Button(
+                    onClick = onDownloadNext,
+                    enabled = state.pendingPhotos.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
+                ) {
+                    Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Next")
                 }
             }
         }
@@ -740,7 +745,7 @@ private fun SectionHeaderCard(
     actionText: String? = null,
     onAction: (() -> Unit)? = null
 ) {
-    MintCard {
+    MintCard(contentPadding = 8.dp) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -760,8 +765,7 @@ private fun SectionHeaderCard(
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
-        Text(hint, style = MaterialTheme.typography.bodySmall, color = MintMuted)
+        Text(hint, style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
     }
 }
 
@@ -773,33 +777,53 @@ private fun PhotoPairCard(
     onEdit: (() -> Unit)?,
     onDelete: (() -> Unit)?,
     onSwap: (() -> Unit)?,
+    reorderMode: Boolean,
     onPreview: (PhotoEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
-    MintCard(modifier = modifier, containerColor = MintCardBg) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-            PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-        }
-        if (onEdit != null || onDelete != null || onSwap != null) {
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
-                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Edit")
+    MintCard(modifier = modifier, containerColor = MintCardBg, contentPadding = 10.dp) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.weight(0.60f)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+                PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
                 }
-                OutlinedButton(onClick = { onSwap?.invoke() }, enabled = onSwap != null && canSwap, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
-                    Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("สลับ")
+                if (!reorderMode && onSwap != null) {
+                    IconButton(
+                        onClick = onSwap,
+                        enabled = canSwap,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(22.dp)
+                            .background(MintCardBg, CircleShape)
+                    ) {
+                        Icon(Icons.Default.SwapHoriz, contentDescription = "Swap IN and OUT", modifier = Modifier.size(13.dp))
+                    }
                 }
-                Button(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = MintDanger)) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Delete")
+            }
+            Box(Modifier.weight(0.40f), contentAlignment = Alignment.Center) {
+                if (reorderMode) {
+                    Icon(
+                        Icons.Default.DragHandle,
+                        contentDescription = if (pair.isReorderable) "Drag to reorder" else "Pair cannot be reordered",
+                        tint = if (pair.isReorderable) MintAccent else MintMuted,
+                        modifier = Modifier.size(26.dp)
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IconButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.size(56.dp)) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(28.dp))
+                        }
+                        IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(56.dp)) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(28.dp))
+                        }
+                    }
                 }
             }
         }
@@ -817,11 +841,11 @@ private fun PairPhoto(
 ) {
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.75f)
+                .aspectRatio(1f)
                 .background(MintSoft, MaterialTheme.shapes.small)
                 .then(if (downloaded) Modifier.alpha(0.42f) else Modifier)
                 .clickable(enabled = photo != null) { photo?.let(onPreview) }
@@ -840,13 +864,12 @@ private fun PairPhoto(
                 MintBadge(text = "EXPORTED", type = "ok", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
             }
         }
-        Text(label, color = MintText, fontWeight = FontWeight.Bold)
         when {
-            photo == null -> Text("ยังไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted)
-            due -> Text("DUE NOW", style = MaterialTheme.typography.labelSmall, color = MintDanger)
-            dueAt != null && !downloaded -> Text("Plan ${fmtTime(dueAt)}", style = MaterialTheme.typography.labelSmall, color = MintAccent)
-            downloaded -> Text(photo.downloadedAt?.let(::fmtDateTimeShort) ?: "Exported", style = MaterialTheme.typography.labelSmall, color = MintMuted)
-            else -> Text("PENDING", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+            photo == null -> Text("$label • ไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
+            due -> Text("$label • DUE NOW", style = MaterialTheme.typography.labelSmall, color = MintDanger, maxLines = 1)
+            dueAt != null && !downloaded -> Text("$label • ${fmtTime(dueAt)}", style = MaterialTheme.typography.labelSmall, color = MintAccent, maxLines = 1)
+            downloaded -> Text("$label • Exported", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
+            else -> Text("$label • Pending", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
         }
     }
 }
