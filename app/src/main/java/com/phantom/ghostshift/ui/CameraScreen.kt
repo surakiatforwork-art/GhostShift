@@ -121,10 +121,12 @@ fun CameraScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         preview.setSurfaceProvider(surfaceProvider)
+                        imageCapture.targetRotation = display?.rotation ?: android.view.Surface.ROTATION_0
                         previewViewRef = this
                     }
                 },
                 update = { previewView ->
+                    imageCapture.targetRotation = previewView.display?.rotation ?: android.view.Surface.ROTATION_0
                     previewViewRef = previewView
                 },
                 modifier = Modifier.fillMaxSize()
@@ -234,8 +236,7 @@ fun CameraScreen(
                         },
                         onError = {
                             captureLocked = false
-                        },
-                        isFrontFacing = (lensFacing == CameraSelector.LENS_FACING_FRONT)
+                        }
                     )
                 },
                 enabled = !captureLocked,
@@ -257,8 +258,7 @@ private fun takePhoto(
     outputDirectory: File,
     executor: Executor,
     onImageCaptured: (Uri) -> Unit,
-    onError: (ImageCaptureException) -> Unit,
-    isFrontFacing: Boolean
+    onError: (ImageCaptureException) -> Unit
 ) {
     val photoFile = File(
         outputDirectory,
@@ -276,131 +276,10 @@ private fun takePhoto(
             }
 
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                // Process image: fix rotation, enforce portrait 4:3, mirror if front camera
-                var bitmap: android.graphics.Bitmap? = null
-                var processed: android.graphics.Bitmap? = null
-                try {
-                    // Read EXIF orientation
-                    val exif = android.media.ExifInterface(photoFile.absolutePath)
-                    val orientation = exif.getAttributeInt(
-                        android.media.ExifInterface.TAG_ORIENTATION,
-                        android.media.ExifInterface.ORIENTATION_NORMAL
-                    )
-                    
-                    // Decode with sample size to save memory
-                    val options = android.graphics.BitmapFactory.Options().apply {
-                        inJustDecodeBounds = true
-                    }
-                    android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                    options.inSampleSize = calculateInSampleSize(options, 1600, 1600)
-                    options.inJustDecodeBounds = false
-                    
-                    bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                    if (bitmap != null) {
-                        val matrix = android.graphics.Matrix()
-                        
-                        // Apply EXIF rotation to fix orientation issues on some devices
-                        when (orientation) {
-                            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-                            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-                            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-                            android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
-                            android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
-                        }
-                        
-                        // For front camera: mirror horizontally and rotate 180° to fix upside-down
-                        if (isFrontFacing) {
-                            matrix.preScale(-1f, 1f)
-                            matrix.postRotate(180f)
-                        }
-                        
-                        // Apply transformations
-                        var rotated = android.graphics.Bitmap.createBitmap(
-                            bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
-                        )
-                        if (rotated != bitmap) bitmap.recycle()
-                        
-                        // Ensure portrait orientation (height > width)
-                        if (rotated.width > rotated.height) {
-                            val rotateMatrix = android.graphics.Matrix().apply { postRotate(90f) }
-                            val portrait = android.graphics.Bitmap.createBitmap(
-                                rotated, 0, 0, rotated.width, rotated.height, rotateMatrix, true
-                            )
-                            rotated.recycle()
-                            rotated = portrait
-                        }
-                        
-                        // Crop to 3:4 aspect ratio (portrait)
-                        val targetRatio = 3f / 4f
-                        val currentRatio = rotated.width.toFloat() / rotated.height.toFloat()
-                        
-                        processed = if (kotlin.math.abs(currentRatio - targetRatio) > 0.01f) {
-                            val cropW: Int
-                            val cropH: Int
-                            if (currentRatio > targetRatio) {
-                                // Too wide, crop width
-                                cropH = rotated.height
-                                cropW = (cropH * targetRatio).toInt()
-                            } else {
-                                // Too tall, crop height
-                                cropW = rotated.width
-                                cropH = (cropW / targetRatio).toInt()
-                            }
-                            val startX = (rotated.width - cropW) / 2
-                            val startY = (rotated.height - cropH) / 2
-                            val cropped = android.graphics.Bitmap.createBitmap(rotated, startX, startY, cropW, cropH)
-                            if (cropped != rotated) rotated.recycle()
-                            cropped
-                        } else {
-                            rotated
-                        }
-                        
-                        // Save processed image
-                        java.io.FileOutputStream(photoFile).use { out ->
-                            processed.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
-                        }
-                        
-                        // Clear EXIF orientation since we already rotated
-                        val newExif = android.media.ExifInterface(photoFile.absolutePath)
-                        newExif.setAttribute(
-                            android.media.ExifInterface.TAG_ORIENTATION,
-                            android.media.ExifInterface.ORIENTATION_NORMAL.toString()
-                        )
-                        newExif.saveAttributes()
-                    }
-                } catch (e: OutOfMemoryError) {
-                    e.printStackTrace()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    processed?.recycle()
-                    bitmap?.recycle()
-                    System.gc()
-                }
                 onImageCaptured(android.net.Uri.fromFile(photoFile))
             }
         }
     )
-}
-
-private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-    // Raw height and width of image
-    val height = options.outHeight
-    val width = options.outWidth
-    var inSampleSize = 1
-
-    if (height > reqHeight || width > reqWidth) {
-        val halfHeight = height / 2
-        val halfWidth = width / 2
-
-        // Calculate the largest inSampleSize value that is a power of 2 and keeps both
-        // height and width larger than the requested height and width.
-        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-            inSampleSize *= 2
-        }
-    }
-
-    return inSampleSize
 }
 
 private suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCoroutine { continuation ->

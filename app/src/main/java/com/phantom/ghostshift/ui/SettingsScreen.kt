@@ -28,6 +28,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.phantom.ghostshift.ui.theme.*
+import com.phantom.ghostshift.domain.ScheduleSettings
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -39,12 +42,25 @@ fun SettingsScreen(
     state: MainUiState,
     onSoundSelected: (String?) -> Unit,
     onTargetTimeSelected: (Long) -> Unit,
+    onScheduleSettingsChanged: (ScheduleSettings) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     val currentSoundUri = state.soundUri
     val currentTargetAt = state.timer.targetAt
+    var inOutMin by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.inOutMinMinutes.toString()) }
+    var inOutMax by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.inOutMaxMinutes?.toString().orEmpty()) }
+    var outInMin by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.outInMinMinutes.toString()) }
+    var outInMax by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.outInMaxMinutes?.toString().orEmpty()) }
+
+    fun saveTiming(autoStart: Boolean = state.scheduleSettings.autoStartOnFirstDownload) {
+        val inMin = inOutMin.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val outMin = outInMin.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val inMax = inOutMax.toIntOrNull()?.coerceAtLeast(inMin)
+        val outMax = outInMax.toIntOrNull()?.coerceAtLeast(outMin)
+        onScheduleSettingsChanged(ScheduleSettings(inMin, inMax, outMin, outMax, autoStart))
+    }
     val targetSummary = if (currentTargetAt != null) {
         formatTargetDateTime(currentTargetAt)
     } else {
@@ -152,6 +168,29 @@ fun SettingsScreen(
                         Icon(Icons.Default.Schedule, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("ตั้งเวลา Target")
+                    }
+                }
+            }
+
+            MintCard {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("ช่วงเวลาระหว่างภาพ", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("เว้นช่องเวลาสูงสุดว่างไว้ หากไม่ต้องการจำกัด", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    TimingFields("IN → OUT", inOutMin, { inOutMin = it.filter(Char::isDigit) }, inOutMax, { inOutMax = it.filter(Char::isDigit) })
+                    TimingFields("OUT → IN", outInMin, { outInMin = it.filter(Char::isDigit) }, outInMax, { outInMax = it.filter(Char::isDigit) })
+                    Button(onClick = { saveTiming() }, colors = ButtonDefaults.buttonColors(containerColor = MintAccent)) {
+                        Text("บันทึกช่วงเวลา")
+                    }
+                    Divider(color = MintLine)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("เริ่มนับเวลาอัตโนมัติ", color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            Text("เริ่ม Timer เมื่อกด Download Next ที่ IN-1", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                        }
+                        Switch(
+                            checked = state.scheduleSettings.autoStartOnFirstDownload,
+                            onCheckedChange = { enabled -> saveTiming(enabled) }
+                        )
                     }
                 }
             }
@@ -292,6 +331,36 @@ private fun PermissionRow(title: String, desc: String, isGranted: Boolean, onCli
         } else {
             TextButton(onClick = onClick) { Text("OPEN", color = MintAccent) }
         }
+    }
+}
+
+@Composable
+private fun TimingFields(
+    title: String,
+    minimum: String,
+    onMinimumChanged: (String) -> Unit,
+    maximum: String,
+    onMaximumChanged: (String) -> Unit
+) {
+    Text(title, style = MaterialTheme.typography.labelLarge, color = MintText)
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = minimum,
+            onValueChange = onMinimumChanged,
+            label = { Text("ขั้นต่ำ (นาที)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f)
+        )
+        OutlinedTextField(
+            value = maximum,
+            onValueChange = onMaximumChanged,
+            label = { Text("สูงสุด (นาที)") },
+            placeholder = { Text("ไม่จำกัด") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 

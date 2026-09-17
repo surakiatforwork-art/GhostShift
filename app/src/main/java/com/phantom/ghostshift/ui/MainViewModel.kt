@@ -10,6 +10,7 @@ import com.phantom.ghostshift.data.UserPreferences
 import com.phantom.ghostshift.domain.ScheduleCalculator
 import com.phantom.ghostshift.domain.SchedulePhoto
 import com.phantom.ghostshift.domain.ScheduleResult
+import com.phantom.ghostshift.domain.ScheduleSettings
 import com.phantom.ghostshift.domain.SlotManager
 import com.phantom.ghostshift.domain.TimerState
 import com.phantom.ghostshift.system.AlarmScheduler
@@ -44,11 +45,9 @@ data class MainUiState(
 
     // gating + unlock progress
     val gateOpen: Boolean = false,
-    val exportedPairsContiguous: Int = 0, // 0..20
-    val unlockEligible: Boolean = false,
-
     // settings
     val soundUri: String? = null,
+    val scheduleSettings: ScheduleSettings = ScheduleSettings(),
 
     // clock (UI countdown only)
     val currentTime: Long = System.currentTimeMillis()
@@ -67,8 +66,6 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val _now = MutableStateFlow(System.currentTimeMillis())
-    @Volatile
-    private var exportNextInProgress = false
 
     // cache to avoid rescheduling every time
     private var lastAlarmKey: AlarmKey? = null
@@ -82,7 +79,8 @@ class MainViewModel(
         repo.downloadedPhotos,
         prefs.timerState,
         prefs.alarmState,
-        prefs.soundPref
+        prefs.soundPref,
+        prefs.scheduleSettings
     ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
         val pending = args[0] as List<PhotoEntity>
@@ -92,6 +90,7 @@ class MainViewModel(
         @Suppress("UNCHECKED_CAST")
         val alarmTriple = args[3] as Triple<Long?, String?, String?>
         val sound = args[4] as String?
+        val settings = args[5] as ScheduleSettings
 
         val all = (pending + downloaded).sortedBySlot()
 
@@ -101,10 +100,6 @@ class MainViewModel(
         // Persisted alarm info
         val (storedDueAt, storedTag, storedChannelId) = alarmTriple
         val alarmActive = storedDueAt != null
-
-        // Compute exported contiguous pairs (1..20) using downloadedAt (not 'downloaded' flag)
-        val contiguousPairs = computeContiguousExportedPairs(all, maxPairs = 20)
-        val unlockEligible = contiguousPairs >= 20
 
         // Build domain photo list once
         val domainPhotos = all.map { it.toSchedulePhoto() }
@@ -116,7 +111,7 @@ class MainViewModel(
         // Schedule: only meaningful when timer.running
         val schedule = when {
             !timer.running -> ScheduleResult(ok = false, warn = "ยังไม่เริ่มจับเวลา")
-            else -> ScheduleCalculator.computeScheduleExactFit(domainPhotos, timer)
+            else -> ScheduleCalculator.computeScheduleExactFit(domainPhotos, timer, settings)
         }
 
         MainUiState(
@@ -126,15 +121,14 @@ class MainViewModel(
             schedule = schedule,
             nextSlotTag = nextSlot,
             canStartTimer = !timer.running,
-            isTimerLocked = timer.locked,
+            isTimerLocked = false,
             alarmDueAt = storedDueAt,
             alarmTag = storedTag,
             alarmChannelId = storedChannelId,
             alarmActive = alarmActive,
             gateOpen = gateOpen,
-            exportedPairsContiguous = contiguousPairs,
-            unlockEligible = unlockEligible,
             soundUri = sound,
+            scheduleSettings = settings,
             currentTime = System.currentTimeMillis() // will be overridden by uiState combine with _now
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, MainUiState())
@@ -233,14 +227,9 @@ class MainViewModel(
             val defaultTarget = now + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
             val target = savedTimer.targetAt?.takeIf { it > now } ?: defaultTarget
 
-            // If user already exported pairs >= 20 BEFORE starting, do not re-lock.
-            val all = repo.allPhotosNowSorted()
-            val contiguousPairs = computeContiguousExportedPairs(all, maxPairs = 20)
-            val unlockedAlready = contiguousPairs >= 20
-
             val newState = TimerState(
                 running = true,
-                locked = !unlockedAlready,
+                locked = false,
                 startAt = now,
                 targetAt = target
             )
@@ -320,50 +309,26 @@ class MainViewModel(
         }
     }
 
-    fun exportPhoto(photo: PhotoEntity) {
-        viewModelScope.launch {
-            exportPhotoInternal(photo)
-        }
+    fun swapPair(index: Int) {
+        viewModelScope.launch { repo.swapPairContents(index) }
     }
 
-    private suspend fun exportPhotoInternal(photo: PhotoEntity) {
-        // First-time export should be driven by downloadedAt, not boolean flag.
-        val wasFirstTime = (photo.downloadedAt == null)
-
-        val ok = repo.exportPhoto(photo)
-        if (!ok) return
-
-        // Unlock triggers ONLY on first-time export, and specifically when OUT-20 is first-time exported
-        if (wasFirstTime) {
-            val all = repo.allPhotosNowSorted()
-            val contiguousPairs = computeContiguousExportedPairs(all, maxPairs = 20)
-
-            if (contiguousPairs >= 20) {
-                val currentTimer = prefs.timerState.stateIn(viewModelScope, SharingStarted.Eagerly, TimerState(false, false, null, null)).value
-                // Safer: re-read directly (suspend) if you have a Flow-first utility; leaving as current snapshot is ok if timerState is StateFlow in prefs.
-                // If your prefs.timerState is Flow, consider using .first() here.
-
-                // Unlock whenever we reach 20 pairs, regardless of which one was last
-                if (currentTimer.running && currentTimer.locked) {
-                    prefs.saveTimerState(currentTimer.copy(locked = false))
-                }
-            }
+    fun exportPhoto(photo: PhotoEntity) {
+        viewModelScope.launch {
+            repo.exportPhoto(photo)
         }
     }
 
     fun exportNextPhoto() {
-        if (exportNextInProgress) return
-
-        viewModelScope.launch {
-            exportNextInProgress = true
-            // First-time export should be driven by downloadedAt, not boolean flag.
-            try {
-                val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
-                if (next != null) {
-                    exportPhotoInternal(next)
+        val next = coreState.value.pendingPhotos.firstOrNull()
+        if (next != null) {
+            viewModelScope.launch {
+                val currentTimer = prefs.timerState.first()
+                val settings = prefs.scheduleSettings.first()
+                if (next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
+                    startTimerNow()
                 }
-            } finally {
-                exportNextInProgress = false
+                repo.exportPhoto(next)
             }
         }
     }
@@ -373,6 +338,17 @@ class MainViewModel(
             prefs.setSoundUri(uri)
             // coreState will emit; manageAlarmSideEffect will reschedule if needed because soundUri is part of AlarmKey
         }
+    }
+
+    fun saveScheduleSettings(settings: ScheduleSettings) {
+        viewModelScope.launch { prefs.saveScheduleSettings(settings) }
+    }
+
+    private suspend fun startTimerNow() {
+        val now = System.currentTimeMillis()
+        val saved = prefs.timerState.first()
+        val target = saved.targetAt?.takeIf { it > now } ?: now + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
+        prefs.saveTimerState(TimerState(true, false, now, target))
     }
 
     // -------------------------
@@ -399,18 +375,6 @@ class MainViewModel(
     private fun kindOrder(kind: Any?): Int {
         val k = kind?.toString()?.uppercase() ?: ""
         return if (k == "IN") 0 else 1
-    }
-
-    private fun computeContiguousExportedPairs(all: List<PhotoEntity>, maxPairs: Int): Int {
-        val byTag = all.associateBy { it.tag }
-        var count = 0
-        for (i in 1..maxPairs) {
-            val inE = byTag["IN-$i"]
-            val outE = byTag["OUT-$i"]
-            val ok = (inE?.downloadedAt != null) && (outE?.downloadedAt != null)
-            if (ok) count++ else break
-        }
-        return count
     }
 
     /**

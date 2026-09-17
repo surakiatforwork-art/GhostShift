@@ -4,11 +4,13 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.exifinterface.media.ExifInterface
 import com.phantom.ghostshift.domain.Kind
 import com.phantom.ghostshift.domain.SlotManager
 import com.phantom.ghostshift.domain.parseTag
@@ -102,23 +104,41 @@ class PhotoRepository(
     }
 
     private fun decodeAndResize(uri: Uri): Triple<Bitmap, Int, Int> {
-        // 1. Handle EXIF Rotation
-        val inputStream = context.contentResolver.openInputStream(uri) ?: throw Exception("Cannot open uri")
-        
-        // Read Exif (only works for File Uris mostly, but Stream support exists in newer Android)
-        // For simplicity, strict parity usually implies "upright".
-        // CameraX saves correct Exif. Gallery picks might vary.
-        // We will decode and trust the content, but for rigorous parity we should handle rotation.
-        // Since we are limited in imports (ExifInterface needs dependency usually or standard library),
-        // let's try standard BitmapFactory decoding.
-        
-        // Note: BitmapFactory.decodeStream does NOT auto-rotate.
-        // To keep it simple without adding androidx.exifinterface dependency if not present,
-        // we assume CameraX output is handled or caller provided upright image.
-        // (CameraScreen manually flips front cam, so it should be fine).
-        
-        val original = BitmapFactory.decodeStream(inputStream) ?: throw Exception("Cannot decode image")
-        inputStream.close()
+        val orientation = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                ExifInterface(input).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            }
+        }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+        var original = context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input)
+        } ?: throw Exception("Cannot decode image")
+
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> { matrix.setRotate(180f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+        }
+        if (!matrix.isIdentity) {
+            val oriented = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+            if (oriented != original) original.recycle()
+            original = oriented
+        }
+        if (original.width > original.height) {
+            val portrait = Bitmap.createBitmap(
+                original, 0, 0, original.width, original.height,
+                Matrix().apply { postRotate(90f) }, true
+            )
+            if (portrait != original) original.recycle()
+            original = portrait
+        }
 
         val w = original.width
         val h = original.height
@@ -183,12 +203,8 @@ class PhotoRepository(
 
     suspend fun exportPhoto(photo: PhotoEntity): Boolean {
         val firstAttemptAt = System.currentTimeMillis()
-        if (exportPhotoOnce(photo, firstAttemptAt)) {
-            return true
-        }
+        if (exportPhotoOnce(photo, firstAttemptAt)) return true
 
-        // Some OEM MediaStore providers sporadically fail the first insert/write.
-        // A short retry replaces the user's current "double tap" workaround.
         delay(150)
         return exportPhotoOnce(photo, System.currentTimeMillis())
     }
@@ -214,12 +230,11 @@ class PhotoRepository(
                 val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 } else {
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI // Fallback to Pictures/images on old android?
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                 }
 
                 val resolver = context.contentResolver
                 destUri = resolver.insert(collection, values) ?: return@withContext false
-
                 val output = resolver.openOutputStream(destUri)
                     ?: throw IllegalStateException("Cannot open output stream for $destUri")
                 output.use { out ->
@@ -233,30 +248,20 @@ class PhotoRepository(
                     values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                     resolver.update(destUri, values, null, null)
                 }
-
-                // Keep the original first-export timestamp when it already exists,
-                // but repair legacy rows where only the boolean was out of sync.
+                
                 if (!photo.downloaded || photo.downloadedAt == null) {
-                    val updated = photo.copy(
-                        downloaded = true,
-                        downloadedAt = photo.downloadedAt ?: exportedAt
-                    )
+                    val updated = photo.copy(downloaded = true, downloadedAt = photo.downloadedAt ?: exportedAt)
                     dao.upsert(updated)
                 }
-
+                
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to export ${photo.tag}", e)
-                destUri?.let { cleanupFailedExport(it) }
+                destUri?.let { uri ->
+                    runCatching { context.contentResolver.delete(uri, null, null) }
+                }
                 false
             }
-        }
-    }
-
-    private fun cleanupFailedExport(uri: Uri) {
-        try {
-            context.contentResolver.delete(uri, null, null)
-        } catch (_: Exception) {
         }
     }
     
@@ -308,6 +313,17 @@ class PhotoRepository(
             resequencePendingList(all, reorderedPending)
             true
         }
+    }
+
+    suspend fun swapPairContents(index: Int): Boolean = withContext(Dispatchers.IO) {
+        val all = dao.getAllSortedByIdxOnce()
+        val inPhoto = all.firstOrNull { it.idx == index && it.kind == Kind.IN } ?: return@withContext false
+        val outPhoto = all.firstOrNull { it.idx == index && it.kind == Kind.OUT } ?: return@withContext false
+        if (inPhoto.downloadedAt != null || outPhoto.downloadedAt != null) return@withContext false
+        val now = System.currentTimeMillis()
+        dao.upsert(inPhoto.copy(filePath = outPhoto.filePath, width = outPhoto.width, height = outPhoto.height, mime = outPhoto.mime, editedAt = now))
+        dao.upsert(outPhoto.copy(filePath = inPhoto.filePath, width = inPhoto.width, height = inPhoto.height, mime = inPhoto.mime, editedAt = now))
+        true
     }
     
     suspend fun deleteAll() {

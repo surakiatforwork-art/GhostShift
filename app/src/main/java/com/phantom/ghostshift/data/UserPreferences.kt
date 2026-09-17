@@ -6,9 +6,11 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.phantom.ghostshift.domain.TimerState
+import com.phantom.ghostshift.domain.ScheduleSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -29,6 +31,11 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         
         val SOUND_URI = stringPreferencesKey("sound_uri")
         val SOUND_SOURCE = stringPreferencesKey("sound_source")
+        val IN_OUT_MIN = intPreferencesKey("in_out_min_minutes")
+        val IN_OUT_MAX = intPreferencesKey("in_out_max_minutes")
+        val OUT_IN_MIN = intPreferencesKey("out_in_min_minutes")
+        val OUT_IN_MAX = intPreferencesKey("out_in_max_minutes")
+        val AUTO_START_FIRST_DOWNLOAD = booleanPreferencesKey("auto_start_first_download")
     }
 
     val timerState: Flow<TimerState> = dataStore.data.map { prefs ->
@@ -50,6 +57,15 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
 
     val mirrorPref: Flow<Boolean> = dataStore.data.map { prefs -> prefs[Keys.UI_MIRROR] ?: true }
     val soundPref: Flow<String?> = dataStore.data.map { prefs -> prefs[Keys.SOUND_URI] }
+    val scheduleSettings: Flow<ScheduleSettings> = dataStore.data.map { prefs ->
+        ScheduleSettings(
+            inOutMinMinutes = prefs[Keys.IN_OUT_MIN] ?: 3,
+            inOutMaxMinutes = prefs[Keys.IN_OUT_MAX]?.takeIf { it > 0 } ?: if (prefs.contains(Keys.IN_OUT_MAX)) null else 25,
+            outInMinMinutes = prefs[Keys.OUT_IN_MIN] ?: 4,
+            outInMaxMinutes = prefs[Keys.OUT_IN_MAX]?.takeIf { it > 0 } ?: if (prefs.contains(Keys.OUT_IN_MAX)) null else 30,
+            autoStartOnFirstDownload = prefs[Keys.AUTO_START_FIRST_DOWNLOAD] ?: false
+        ).normalized()
+    }
 
     suspend fun saveTimerState(state: TimerState) {
         dataStore.edit { prefs ->
@@ -76,4 +92,26 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
             if (uri != null) prefs[Keys.SOUND_URI] = uri else prefs.remove(Keys.SOUND_URI)
         }
     }
+
+    suspend fun saveScheduleSettings(settings: ScheduleSettings) {
+        val normalized = settings.normalized()
+        dataStore.edit { prefs ->
+            prefs[Keys.IN_OUT_MIN] = normalized.inOutMinMinutes
+            prefs[Keys.IN_OUT_MAX] = normalized.inOutMaxMinutes ?: 0
+            prefs[Keys.OUT_IN_MIN] = normalized.outInMinMinutes
+            prefs[Keys.OUT_IN_MAX] = normalized.outInMaxMinutes ?: 0
+            prefs[Keys.AUTO_START_FIRST_DOWNLOAD] = normalized.autoStartOnFirstDownload
+        }
+    }
+}
+
+private fun ScheduleSettings.normalized(): ScheduleSettings {
+    val inMin = inOutMinMinutes.coerceAtLeast(0)
+    val outMin = outInMinMinutes.coerceAtLeast(0)
+    return copy(
+        inOutMinMinutes = inMin,
+        inOutMaxMinutes = inOutMaxMinutes?.coerceAtLeast(inMin),
+        outInMinMinutes = outMin,
+        outInMaxMinutes = outInMaxMinutes?.coerceAtLeast(outMin)
+    )
 }

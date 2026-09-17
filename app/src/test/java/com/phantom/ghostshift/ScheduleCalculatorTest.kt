@@ -3,6 +3,7 @@ package com.phantom.ghostshift
 import com.phantom.ghostshift.domain.Kind
 import com.phantom.ghostshift.domain.ScheduleCalculator
 import com.phantom.ghostshift.domain.SchedulePhoto
+import com.phantom.ghostshift.domain.ScheduleSettings
 import com.phantom.ghostshift.domain.TimerState
 import org.junit.Assert.*
 import org.junit.Test
@@ -107,5 +108,57 @@ class ScheduleCalculatorTest {
         assertEquals("Next tag should be OUT-1", "OUT-1", result.nextTag)
         assertNotNull(result.nextAt)
         assertTrue("Next at should be > downloadedAt", result.nextAt!! > downloadedAt)
+    }
+
+    @Test
+    fun customIntervals_areAppliedByTransitionType() {
+        val startAt = 1_700_000_000_000L
+        val photos = listOf(
+            createPhoto(1, "IN-1", Kind.IN, true, startAt),
+            createPhoto(2, "OUT-1", Kind.OUT, false),
+            createPhoto(3, "IN-2", Kind.IN, false)
+        )
+        val settings = ScheduleSettings(
+            inOutMinMinutes = 10,
+            inOutMaxMinutes = 10,
+            outInMinMinutes = 20,
+            outInMaxMinutes = 20
+        )
+
+        val result = ScheduleCalculator.computeScheduleExactFit(
+            photos,
+            TimerState(true, false, startAt, startAt + 30 * 60_000L),
+            settings
+        )
+
+        assertTrue(result.error, result.ok)
+        assertEquals(startAt + 10 * 60_000L, result.planAtByTag["OUT-1"])
+        assertEquals(startAt + 30 * 60_000L, result.planAtByTag["IN-2"])
+    }
+
+    @Test
+    fun unlimitedMaximum_fillsLongTargetExactly() {
+        val startAt = 1_700_000_000_000L
+        val targetAt = startAt + 12 * 60 * 60_000L
+        val photos = listOf(
+            createPhoto(1, "IN-1", Kind.IN, true, startAt),
+            createPhoto(2, "OUT-1", Kind.OUT, false),
+            createPhoto(3, "IN-2", Kind.IN, false)
+        )
+        val settings = ScheduleSettings(
+            inOutMinMinutes = 3,
+            inOutMaxMinutes = null,
+            outInMinMinutes = 4,
+            outInMaxMinutes = null
+        )
+
+        val result = ScheduleCalculator.computeScheduleExactFit(
+            photos,
+            TimerState(true, false, startAt, targetAt),
+            settings
+        )
+
+        assertTrue(result.error, result.ok)
+        assertEquals(targetAt, result.planAtByTag["IN-2"])
     }
 }

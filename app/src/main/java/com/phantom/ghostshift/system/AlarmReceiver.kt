@@ -43,6 +43,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 val allPhotos = repo.allPhotos.first() 
                 val timerState = prefs.timerState.first()
                 val currentSound = prefs.soundPref.first()
+                val scheduleSettings = prefs.scheduleSettings.first()
 
                 if (!timerState.running) {
                     Log.d("AlarmReceiver", "Timer not running, skipping reschedule")
@@ -67,7 +68,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 }
 
                 // Calculate
-                val result = com.phantom.ghostshift.domain.ScheduleCalculator.computeScheduleExactFit(sortedPhotos, timerState)
+                val result = com.phantom.ghostshift.domain.ScheduleCalculator.computeScheduleExactFit(sortedPhotos, timerState, scheduleSettings)
 
                 if (result.nextAt != null && result.nextTag != null) {
                     val nextAt = result.nextAt

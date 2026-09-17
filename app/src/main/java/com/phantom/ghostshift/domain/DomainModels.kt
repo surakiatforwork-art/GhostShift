@@ -32,6 +32,14 @@ data class TimerState(
     val targetAt: Long?
 )
 
+data class ScheduleSettings(
+    val inOutMinMinutes: Int = 3,
+    val inOutMaxMinutes: Int? = 25,
+    val outInMinMinutes: Int = 4,
+    val outInMaxMinutes: Int? = 30,
+    val autoStartOnFirstDownload: Boolean = false
+)
+
 data class ScheduleResult(
     val ok: Boolean,
     val error: String = "",

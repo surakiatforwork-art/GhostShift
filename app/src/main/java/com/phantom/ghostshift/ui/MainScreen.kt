@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.alpha
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -41,6 +42,10 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import java.io.File
 
+private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outPhoto: PhotoEntity?) {
+    val fullyDownloaded: Boolean get() = inPhoto?.downloadedAt != null && outPhoto?.downloadedAt != null
+}
+
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
@@ -59,31 +64,17 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var confirmResetTimer by remember { mutableStateOf(false) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
     var confirmDeletePendingPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
+    var editChoicePair by remember { mutableStateOf<PhotoPair?>(null) }
+    var deleteChoicePair by remember { mutableStateOf<PhotoPair?>(null) }
 
-    // Pending reorder state
-    var isReorderMode by remember { mutableStateOf(false) }
-    var pendingPhotosUi by remember { mutableStateOf(state.pendingPhotos) }
-
-    LaunchedEffect(state.pendingPhotos, isReorderMode) {
-        if (!isReorderMode) {
-            pendingPhotosUi = state.pendingPhotos
+    val allPairs = (state.pendingPhotos + state.downloadedPhotos)
+        .groupBy { it.idx }
+        .toSortedMap()
+        .map { (index, photos) ->
+            PhotoPair(index, photos.firstOrNull { it.kind.name == "IN" }, photos.firstOrNull { it.kind.name == "OUT" })
         }
-    }
-
-    BackHandler(enabled = isReorderMode) {
-        isReorderMode = false
-    }
-
-    fun movePending(fromIndex: Int, toIndex: Int) {
-        if (fromIndex !in pendingPhotosUi.indices || toIndex !in pendingPhotosUi.indices) return
-        if (fromIndex == toIndex) return
-        val updated = pendingPhotosUi.toMutableList().apply {
-            val item = removeAt(fromIndex)
-            add(toIndex, item)
-        }
-        pendingPhotosUi = updated
-        viewModel.reorderPending(updated.map { it.id })
-    }
+    val pendingPairs = allPairs.filterNot { it.fullyDownloaded }
+    val downloadedPairs = allPairs.filter { it.fullyDownloaded }
     
     // Internal Camera Output
     fun getOutputDirectory(context: Context): File {
@@ -174,6 +165,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             state = state,
             onSoundSelected = { uri -> viewModel.setSound(uri) },
             onTargetTimeSelected = { targetAt -> viewModel.setTargetTime(targetAt) },
+            onScheduleSettingsChanged = { settings -> viewModel.saveScheduleSettings(settings) },
             onBack = { showSettings = false }
         )
         return
@@ -234,6 +226,33 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         )
     }
 
+    editChoicePair?.let { pair ->
+        PhotoChoiceDialog(
+            title = "เลือกภาพที่ต้องการแก้ไข",
+            pair = pair,
+            allowDownloaded = false,
+            onDismiss = { editChoicePair = null },
+            onSelected = { photo ->
+                editChoicePair = null
+                editTargetId = photo.id
+                showEditDialog = true
+            }
+        )
+    }
+
+    deleteChoicePair?.let { pair ->
+        PhotoChoiceDialog(
+            title = "เลือกภาพที่ต้องการลบ",
+            pair = pair,
+            allowDownloaded = false,
+            onDismiss = { deleteChoicePair = null },
+            onSelected = { photo ->
+                deleteChoicePair = null
+                confirmDeletePendingPhoto = photo
+            }
+        )
+    }
+
     Scaffold(
         containerColor = MintBg,
         snackbarHost = { SnackbarHost(snack) },
@@ -285,65 +304,41 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             item {
                 SectionHeaderCard(
                     title = "Pending (ยังไม่ Export)",
-                    count = pendingPhotosUi.size,
-                    hint = if (pendingPhotosUi.isEmpty()) "ยังไม่มีรายการ Pending" else "กดปุ่มจัดเรียงเพื่อสลับลำดับด้วยลูกศรขึ้น/ลง",
-                    actionText = if (isReorderMode) "เสร็จสิ้น" else "จัดเรียง",
-                    onAction = {
-                        val nextMode = !isReorderMode
-                        isReorderMode = nextMode
-                        if (nextMode) {
-                            confirmDeletePendingPhoto = null
-                            showEditDialog = false
-                            pendingPhotosUi = state.pendingPhotos
-                        } else {
-                            pendingPhotosUi = state.pendingPhotos
-                        }
-                    }
+                    count = pendingPairs.size,
+                    hint = if (pendingPairs.isEmpty()) "ยังไม่มีรายการ Pending" else "แต่ละการ์ดจะแสดง IN ทางซ้าย และ OUT ทางขวา"
                 )
             }
 
-            itemsIndexed(pendingPhotosUi, key = { _, it -> it.id }) { index, photo ->
-                val dueAt = state.schedule.planAtByTag[photo.tag]
-                PhotoCard(
+            items(pendingPairs, key = { it.index }) { pair ->
+                PhotoPairCard(
                     modifier = Modifier.fillMaxWidth(),
-                    photo = photo,
-                    isDownloaded = false,
-                    dueAt = dueAt,
+                    pair = pair,
+                    planAtByTag = state.schedule.planAtByTag,
                     currentTime = state.currentTime,
-                    onEdit = if (!isReorderMode) {
-                        {
-                            editTargetId = photo.id
-                            showEditDialog = true
-                        }
-                    } else null,
-                    onDelete = if (!isReorderMode) { { confirmDeletePendingPhoto = photo } } else null,
-                    reorderMode = isReorderMode,
-                    canMoveUp = index > 0,
-                    canMoveDown = index < pendingPhotosUi.lastIndex,
-                    onMoveUp = if (index > 0) { { movePending(index, index - 1) } } else null,
-                    onMoveDown = if (index < pendingPhotosUi.lastIndex) { { movePending(index, index + 1) } } else null,
-                    onPreview = { previewPhoto = photo }
+                    onEdit = { editChoicePair = pair },
+                    onDelete = { deleteChoicePair = pair },
+                    onSwap = { viewModel.swapPair(pair.index) },
+                    onPreview = { previewPhoto = it }
                 )
             }
 
             item {
                 SectionHeaderCard(
                     title = "Downloaded (Exported)",
-                    count = state.downloadedPhotos.size,
-                    hint = if (state.downloadedPhotos.isEmpty()) "ยังไม่มีรายการ Downloaded" else "รายการที่ Export แล้ว"
+                    count = downloadedPairs.size,
+                    hint = if (downloadedPairs.isEmpty()) "ยังไม่มีคู่ที่ Export ครบ" else "คู่ที่ Export ครบทั้ง IN และ OUT"
                 )
             }
 
-            items(state.downloadedPhotos, key = { it.id }) { photo ->
-                val dueAt = state.schedule.planAtByTag[photo.tag]
-                PhotoCard(
-                    photo = photo,
-                    isDownloaded = true,
-                    dueAt = dueAt,
+            items(downloadedPairs, key = { it.index }) { pair ->
+                PhotoPairCard(
+                    pair = pair,
+                    planAtByTag = state.schedule.planAtByTag,
                     currentTime = state.currentTime,
                     onEdit = null,
                     onDelete = null,
-                    onPreview = { previewPhoto = photo }
+                    onSwap = null,
+                    onPreview = { previewPhoto = it }
                 )
             }
 
@@ -522,14 +517,13 @@ fun StatusHeader(
                             modifier = Modifier.weight(1f)
                         )
 
-                        val lockLabel = if (state.isTimerLocked) "LOCK" else "UNLOCK"
                         AssistChip(
                             onClick = { /* display only */ },
                             enabled = false,
-                            label = { Text(lockLabel) },
+                            label = { Text("NO LIMIT") },
                             leadingIcon = {
                                 Icon(
-                                    if (state.isTimerLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                    Icons.Default.LockOpen,
                                     contentDescription = null
                                 )
                             },
@@ -539,9 +533,6 @@ fun StatusHeader(
                         )
                     }
 
-                    // Gate / progress to unlock
-                    val pairs = max(0, state.exportedPairsContiguous)
-                    val progress = (pairs.coerceAtMost(20) / 20f)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -558,14 +549,8 @@ fun StatusHeader(
                         TextButton(onClick = onRequestGateHelp) { Text("Help?", color = MintAccent) }
                     }
 
-                    LinearProgressIndicator(
-                        progress = progress,
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MintAccent,
-                        trackColor = MintLine
-                    )
                     Text(
-                        "ปลดล็อกเมื่อ Export ครบคู่ต่อเนื่อง 1..20 (ตอนนี้: $pairs/20)",
+                        "จำนวนภาพไม่จำกัด และรีเซ็ตเวลาได้ตลอดเวลา",
                         style = MaterialTheme.typography.labelMedium,
                         color = MintMuted
                     )
@@ -781,7 +766,120 @@ private fun SectionHeaderCard(
 }
 
 @Composable
-private fun PhotoCard(
+private fun PhotoPairCard(
+    pair: PhotoPair,
+    planAtByTag: Map<String, Long>,
+    currentTime: Long,
+    onEdit: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+    onSwap: (() -> Unit)?,
+    onPreview: (PhotoEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
+        pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
+    MintCard(modifier = modifier, containerColor = MintCardBg) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+            PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+        }
+        if (onEdit != null || onDelete != null || onSwap != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Edit")
+                }
+                OutlinedButton(onClick = { onSwap?.invoke() }, enabled = onSwap != null && canSwap, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("สลับ")
+                }
+                Button(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = MintDanger)) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Delete")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PairPhoto(
+    label: String,
+    photo: PhotoEntity?,
+    dueAt: Long?,
+    currentTime: Long,
+    onPreview: (PhotoEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val downloaded = photo?.downloadedAt != null
+    val due = dueAt != null && currentTime >= dueAt && !downloaded
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.75f)
+                .background(MintSoft, MaterialTheme.shapes.small)
+                .then(if (downloaded) Modifier.alpha(0.42f) else Modifier)
+                .clickable(enabled = photo != null) { photo?.let(onPreview) }
+        ) {
+            if (photo != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data("file://${photo.filePath}").crossfade(true).build(),
+                    contentDescription = label,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = MintMuted, modifier = Modifier.align(Alignment.Center).size(36.dp))
+            }
+            if (downloaded) {
+                MintBadge(text = "EXPORTED", type = "ok", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
+            }
+        }
+        Text(label, color = MintText, fontWeight = FontWeight.Bold)
+        when {
+            photo == null -> Text("ยังไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+            due -> Text("DUE NOW", style = MaterialTheme.typography.labelSmall, color = MintDanger)
+            dueAt != null && !downloaded -> Text("Plan ${fmtTime(dueAt)}", style = MaterialTheme.typography.labelSmall, color = MintAccent)
+            downloaded -> Text(photo.downloadedAt?.let(::fmtDateTimeShort) ?: "Exported", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+            else -> Text("PENDING", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+        }
+    }
+}
+
+@Composable
+private fun PhotoChoiceDialog(
+    title: String,
+    pair: PhotoPair,
+    allowDownloaded: Boolean,
+    onDismiss: () -> Unit,
+    onSelected: (PhotoEntity) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                listOf("IN-${pair.index}" to pair.inPhoto, "OUT-${pair.index}" to pair.outPhoto).forEach { (label, photo) ->
+                    OutlinedButton(
+                        onClick = { photo?.let(onSelected) },
+                        enabled = photo != null && (allowDownloaded || photo.downloadedAt == null),
+                        modifier = Modifier.weight(1f)
+                    ) { Text(label) }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("ยกเลิก") } }
+    )
+}
+
+@Composable
+private fun LegacyPhotoCard(
     modifier: Modifier = Modifier,
     photo: PhotoEntity,
     isDownloaded: Boolean,
