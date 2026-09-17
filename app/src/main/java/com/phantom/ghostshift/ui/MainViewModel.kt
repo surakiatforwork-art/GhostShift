@@ -273,11 +273,11 @@ class MainViewModel(
         }
     }
 
-    fun addPhotoFromPicker(uri: Uri) {
-        addPhotosFromPicker(listOf(uri))
+    fun addPhotoFromPicker(uri: Uri, mirrorHorizontally: Boolean = false) {
+        addPhotosFromPicker(listOf(uri), mirrorHorizontally)
     }
 
-    fun addPhotosFromPicker(uris: List<Uri>) {
+    fun addPhotosFromPicker(uris: List<Uri>, mirrorHorizontally: Boolean = false) {
         if (uris.isEmpty()) return
 
         viewModelScope.launch {
@@ -285,14 +285,14 @@ class MainViewModel(
                 val current = repo.allPhotosNowSorted()
                 val mapped = current.map { it.toSchedulePhoto() }
                 val nextTag = SlotManager.computeNextSlot(mapped)
-                repo.addPhotoFromUri(uri, nextTag)
+                repo.addPhotoFromUri(uri, nextTag, mirrorHorizontally)
             }
         }
     }
 
-    fun replacePhoto(id: Long, uri: Uri) {
+    fun replacePhoto(id: Long, uri: Uri, mirrorHorizontally: Boolean = false) {
         viewModelScope.launch {
-            repo.replacePhotoFromUri(id, uri)
+            repo.replacePhotoFromUri(id, uri, mirrorHorizontally)
         }
     }
 

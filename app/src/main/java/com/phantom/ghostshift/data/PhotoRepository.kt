@@ -48,21 +48,26 @@ class PhotoRepository(
 
     suspend fun getById(id: Long): PhotoEntity? = dao.getById(id)
 
-    suspend fun addPhotoFromUri(uri: Uri, tag: String) {
-        processAndSave(uri, tag) // Logic for Add
+    suspend fun addPhotoFromUri(uri: Uri, tag: String, mirrorHorizontally: Boolean = false) {
+        processAndSave(uri, tag, mirrorHorizontally = mirrorHorizontally)
     }
 
-    suspend fun replacePhotoFromUri(id: Long, uri: Uri) {
+    suspend fun replacePhotoFromUri(id: Long, uri: Uri, mirrorHorizontally: Boolean = false) {
         val photo = dao.getById(id) ?: return
-        processAndSave(uri, photo.tag, replaceId = id)
+        processAndSave(uri, photo.tag, replaceId = id, mirrorHorizontally = mirrorHorizontally)
     }
 
-    private suspend fun processAndSave(uri: Uri, tag: String, replaceId: Long? = null) {
+    private suspend fun processAndSave(
+        uri: Uri,
+        tag: String,
+        replaceId: Long? = null,
+        mirrorHorizontally: Boolean = false
+    ) {
         withContext(Dispatchers.IO) {
             val (kind, idx) = tag.parseTag() ?: (Kind.IN to 0) // Should validation happen before? Yes.
             
             // Decode & Resize
-            val (bitmap, width, height) = decodeAndResize(uri)
+            val (bitmap, width, height) = decodeAndResize(uri, mirrorHorizontally)
             val file = File(context.filesDir, "p_${System.currentTimeMillis()}.jpg")
             
             FileOutputStream(file).use { out ->
@@ -103,7 +108,7 @@ class PhotoRepository(
         }
     }
 
-    private fun decodeAndResize(uri: Uri): Triple<Bitmap, Int, Int> {
+    private fun decodeAndResize(uri: Uri, mirrorHorizontally: Boolean): Triple<Bitmap, Int, Int> {
         val orientation = runCatching {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 ExifInterface(input).getAttributeInt(
@@ -138,6 +143,14 @@ class PhotoRepository(
             )
             if (portrait != original) original.recycle()
             original = portrait
+        }
+        if (mirrorHorizontally) {
+            val mirrored = Bitmap.createBitmap(
+                original, 0, 0, original.width, original.height,
+                Matrix().apply { postScale(-1f, 1f) }, true
+            )
+            if (mirrored != original) original.recycle()
+            original = mirrored
         }
 
         val w = original.width

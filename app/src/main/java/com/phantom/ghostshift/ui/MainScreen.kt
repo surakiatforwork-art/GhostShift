@@ -85,14 +85,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     // Handlers
-    fun onPhotoCaptured(uri: Uri) {
+    fun onPhotoCaptured(uri: Uri, mirrorHorizontally: Boolean) {
         showCamera = false
         val rid = editTargetId
         if (rid != null) {
-            viewModel.replacePhoto(rid, uri)
+            viewModel.replacePhoto(rid, uri, mirrorHorizontally)
             editTargetId = null
         } else {
-            viewModel.addPhotoFromPicker(uri)
+            viewModel.addPhotoFromPicker(uri, mirrorHorizontally)
         }
     }
 
@@ -152,7 +152,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     if (showCamera) {
         CameraScreen(
             outputDirectory = getOutputDirectory(context),
-            onImageCaptured = { uri -> onPhotoCaptured(uri) },
+            onImageCaptured = { uri, mirrorHorizontally -> onPhotoCaptured(uri, mirrorHorizontally) },
             onClose = { showCamera = false }
         )
         return // Show only camera
@@ -309,7 +309,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 )
             }
 
-            items(pendingPairs, key = { it.index }) { pair ->
+            items(pendingPairs, key = { "pending-${it.index}" }) { pair ->
                 PhotoPairCard(
                     modifier = Modifier.fillMaxWidth(),
                     pair = pair,
@@ -330,7 +330,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 )
             }
 
-            items(downloadedPairs, key = { it.index }) { pair ->
+            items(downloadedPairs, key = { "downloaded-${it.index}" }) { pair ->
                 PhotoPairCard(
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,

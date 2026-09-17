@@ -62,7 +62,7 @@ private fun applyMirror(previewView: PreviewView, isFront: Boolean) {
 @Composable
 fun CameraScreen(
     outputDirectory: File,
-    onImageCaptured: (Uri) -> Unit,
+    onImageCaptured: (Uri, Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -230,9 +230,10 @@ fun CameraScreen(
                         filenameFormat = "yyyy-MM-dd-HH-mm-ss-SSS",
                         imageCapture = imageCapture,
                         outputDirectory = outputDirectory,
+                        mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT,
                         executor = ContextCompat.getMainExecutor(context),
-                        onImageCaptured = { uri ->
-                            onImageCaptured(uri)
+                        onImageCaptured = { uri, mirrorHorizontally ->
+                            onImageCaptured(uri, mirrorHorizontally)
                         },
                         onError = {
                             captureLocked = false
@@ -256,8 +257,9 @@ private fun takePhoto(
     filenameFormat: String,
     imageCapture: ImageCapture,
     outputDirectory: File,
+    mirrorHorizontally: Boolean,
     executor: Executor,
-    onImageCaptured: (Uri) -> Unit,
+    onImageCaptured: (Uri, Boolean) -> Unit,
     onError: (ImageCaptureException) -> Unit
 ) {
     val photoFile = File(
@@ -276,7 +278,7 @@ private fun takePhoto(
             }
 
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                onImageCaptured(android.net.Uri.fromFile(photoFile))
+                onImageCaptured(android.net.Uri.fromFile(photoFile), mirrorHorizontally)
             }
         }
     )
