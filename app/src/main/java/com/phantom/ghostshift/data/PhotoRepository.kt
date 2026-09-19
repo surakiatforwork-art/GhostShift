@@ -48,6 +48,13 @@ class PhotoRepository(
 
     suspend fun getById(id: Long): PhotoEntity? = dao.getById(id)
 
+    suspend fun savePairRemark(index: Int, remark: String) {
+        val normalized = remark.trim().take(120).ifBlank { null }
+        withContext(Dispatchers.IO) {
+            dao.updatePairRemark(index, normalized)
+        }
+    }
+
     suspend fun addPhotoFromUri(uri: Uri, tag: String, mirrorHorizontally: Boolean = false) {
         processAndSave(uri, tag, mirrorHorizontally = mirrorHorizontally)
     }

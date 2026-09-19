@@ -8,6 +8,15 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -17,7 +26,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -50,6 +64,7 @@ import java.io.File
 
 private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outPhoto: PhotoEntity?) {
     val stableId: Long get() = inPhoto?.id ?: outPhoto?.id ?: index.toLong()
+    val remark: String? get() = inPhoto?.remark?.takeIf { it.isNotBlank() } ?: outPhoto?.remark?.takeIf { it.isNotBlank() }
     val fullyDownloaded: Boolean get() = inPhoto?.downloadedAt != null && outPhoto?.downloadedAt != null
     val isReorderable: Boolean get() = inPhoto != null && outPhoto != null &&
         inPhoto.downloadedAt == null && outPhoto.downloadedAt == null
@@ -79,6 +94,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var reorderPairs by remember { mutableStateOf<List<PhotoPair>>(emptyList()) }
     var draggedPairId by remember { mutableStateOf<Long?>(null) }
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
+    var exportHeadsUp by remember { mutableStateOf<ExportHeadsUpEvent?>(null) }
     val listState = rememberLazyListState()
     val latestReorderPairs by rememberUpdatedState(reorderPairs)
 
@@ -94,6 +110,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
     LaunchedEffect(pendingPairs, reorderMode) {
         if (!reorderMode) reorderPairs = pendingPairs
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.exportHeadsUpEvents.collect { event ->
+            exportHeadsUp = event
+            delay(3_500)
+            if (exportHeadsUp == event) exportHeadsUp = null
+        }
     }
     
     // Internal Camera Output
@@ -252,6 +276,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             title = "เลือกภาพที่ต้องการแก้ไข",
             pair = pair,
             allowDownloaded = false,
+            onRemarkSaved = { remark -> viewModel.savePairRemark(pair.index, remark) },
             onDismiss = { editChoicePair = null },
             onSelected = { photo ->
                 editChoicePair = null
@@ -274,6 +299,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         )
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MintBg,
         snackbarHost = { SnackbarHost(snack) },
@@ -439,6 +465,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             item {
                 Spacer(Modifier.height(8.dp))
             }
+        }
+    }
+        exportHeadsUp?.let { event ->
+            ExportHeadsUpBanner(
+                event = event,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp, start = 16.dp, end = 16.dp)
+                    .zIndex(2f)
+            )
         }
     }
 
@@ -622,14 +658,18 @@ fun StatusHeader(
                 }
                 Button(
                     onClick = onDownloadNext,
-                    enabled = state.pendingPhotos.isNotEmpty(),
+                    enabled = state.pendingPhotos.isNotEmpty() && !state.isExportingNext,
                     modifier = Modifier.width(136.dp).height(58.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
                 ) {
                     Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Next", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (state.isExportingNext) "กำลังบันทึก" else "Next",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -811,47 +851,64 @@ private fun PhotoPairCard(
     val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
     MintCard(modifier = modifier, containerColor = MintCardBg, contentPadding = 10.dp) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.weight(0.25f), contentAlignment = Alignment.Center) {
-                if (reorderMode) {
-                    Icon(
-                        Icons.Default.DragHandle,
-                        contentDescription = if (pair.isReorderable) "Drag to reorder" else "Pair cannot be reordered",
-                        tint = if (pair.isReorderable) MintAccent else MintMuted,
-                        modifier = Modifier.size(30.dp)
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        IconButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.size(56.dp)) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(28.dp))
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.weight(0.15f), contentAlignment = Alignment.Center) {
+                    if (reorderMode) {
+                        Icon(
+                            Icons.Default.DragHandle,
+                            contentDescription = if (pair.isReorderable) "Drag to reorder" else "Pair cannot be reordered",
+                            tint = if (pair.isReorderable) MintAccent else MintMuted,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            IconButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.size(56.dp)) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(28.dp))
+                            }
+                            IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(56.dp)) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(28.dp))
+                            }
                         }
-                        IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(56.dp)) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(28.dp))
+                    }
+                }
+                Box(Modifier.weight(0.85f)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+                    }
+                    if (!reorderMode && onSwap != null) {
+                        IconButton(
+                            onClick = onSwap,
+                            enabled = canSwap,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .size(48.dp)
+                                .background(MintCardBg, CircleShape)
+                        ) {
+                            Icon(Icons.Default.SwapHoriz, contentDescription = "Swap IN and OUT", modifier = Modifier.size(24.dp))
                         }
                     }
                 }
             }
-            Box(Modifier.weight(0.75f)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-                    PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-                }
-                if (!reorderMode && onSwap != null) {
-                    IconButton(
-                        onClick = onSwap,
-                        enabled = canSwap,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(56.dp)
-                            .background(MintCardBg, CircleShape)
-                    ) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Swap IN and OUT", modifier = Modifier.size(28.dp))
-                    }
-                }
+            pair.remark?.let { remark ->
+                Text(
+                    text = remark,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .semantics { contentDescription = "Remark: $remark" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MintText,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -868,12 +925,28 @@ private fun PairPhoto(
 ) {
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
+    val dueBorderAlpha by rememberInfiniteTransition(label = "dueBorder").animateFloat(
+        initialValue = 0.28f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 650),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dueBorderAlpha"
+    )
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f)
+                .aspectRatio(0.9f)
                 .background(MintSoft, MaterialTheme.shapes.small)
+                .then(
+                    if (due) {
+                        Modifier.border(3.dp, MintDanger.copy(alpha = dueBorderAlpha), MaterialTheme.shapes.small)
+                    } else {
+                        Modifier
+                    }
+                )
                 .then(if (downloaded) Modifier.alpha(0.42f) else Modifier)
                 .clickable(enabled = photo != null) { photo?.let(onPreview) }
         ) {
@@ -890,10 +963,25 @@ private fun PairPhoto(
             if (downloaded) {
                 MintBadge(text = "EXPORTED", type = "ok", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
             }
+            if (due) {
+                Surface(
+                    color = MintDanger,
+                    shape = MaterialTheme.shapes.extraSmall,
+                    modifier = Modifier.align(Alignment.BottomStart)
+                ) {
+                    Text(
+                        "ถึงเวลาแล้ว",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
         }
         when {
             photo == null -> Text("$label • ไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
-            due -> Text("$label • DUE NOW", style = MaterialTheme.typography.labelSmall, color = MintDanger, maxLines = 1)
+            due -> Text("$label • ถึงเวลาแล้ว", style = MaterialTheme.typography.labelSmall, color = MintDanger, maxLines = 1)
             dueAt != null && !downloaded -> Text("$label • ${fmtTime(dueAt)}", style = MaterialTheme.typography.labelSmall, color = MintAccent, maxLines = 1)
             downloaded -> Text("$label • Exported", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
             else -> Text("$label • Pending", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
@@ -906,26 +994,82 @@ private fun PhotoChoiceDialog(
     title: String,
     pair: PhotoPair,
     allowDownloaded: Boolean,
+    onRemarkSaved: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
     onSelected: (PhotoEntity) -> Unit
 ) {
+    var remark by remember(pair.index, pair.remark) { mutableStateOf(pair.remark.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                listOf("IN-${pair.index}" to pair.inPhoto, "OUT-${pair.index}" to pair.outPhoto).forEach { (label, photo) ->
-                    OutlinedButton(
-                        onClick = { photo?.let(onSelected) },
-                        enabled = photo != null && (allowDownloaded || photo.downloadedAt == null),
-                        modifier = Modifier.weight(1f)
-                    ) { Text(label) }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (onRemarkSaved != null) {
+                    OutlinedTextField(
+                        value = remark,
+                        onValueChange = { remark = it.take(120) },
+                        label = { Text("Remark เช่น เลขสาขา") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    listOf("IN-${pair.index}" to pair.inPhoto, "OUT-${pair.index}" to pair.outPhoto).forEach { (label, photo) ->
+                        OutlinedButton(
+                            onClick = {
+                                onRemarkSaved?.invoke(remark)
+                                photo?.let(onSelected)
+                            },
+                            enabled = photo != null && (allowDownloaded || photo.downloadedAt == null),
+                            modifier = Modifier.weight(1f)
+                        ) { Text(label) }
+                    }
                 }
             }
         },
-        confirmButton = {},
+        confirmButton = {
+            if (onRemarkSaved != null) {
+                TextButton(onClick = {
+                    onRemarkSaved(remark)
+                    onDismiss()
+                }) { Text("บันทึกหมายเหตุ") }
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("ยกเลิก") } }
     )
+}
+
+@Composable
+private fun ExportHeadsUpBanner(event: ExportHeadsUpEvent, modifier: Modifier = Modifier) {
+    val readableText = buildString {
+        append("ส่งออก ${event.tag} สำเร็จ")
+        event.remark?.takeIf { it.isNotBlank() }?.let { append(", หมายเหตุ $it") }
+    }
+    AnimatedVisibility(
+        visible = true,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        modifier = modifier
+    ) {
+        Surface(
+            color = MintAccent,
+            shape = MaterialTheme.shapes.medium,
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = readableText
+                    liveRegion = LiveRegionMode.Assertive
+                }
+        ) {
+            Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+                Text("บันทึกภาพแล้ว", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                Text(event.tag, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                event.remark?.takeIf { it.isNotBlank() }?.let { remark ->
+                    Text(remark, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
 }
 
 @Composable

@@ -17,5 +17,6 @@ data class PhotoEntity(
     val filePath: String,
     val width: Int,
     val height: Int,
-    val mime: String = "image/jpeg"
+    val mime: String = "image/jpeg",
+    val remark: String? = null
 )

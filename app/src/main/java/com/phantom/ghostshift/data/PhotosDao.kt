@@ -31,4 +31,7 @@ interface PhotosDao {
     
     @Query("SELECT * FROM photos WHERE id = :id")
     suspend fun getById(id: Long): PhotoEntity?
+
+    @Query("UPDATE photos SET remark = :remark WHERE idx = :index")
+    suspend fun updatePairRemark(index: Int, remark: String?)
 }

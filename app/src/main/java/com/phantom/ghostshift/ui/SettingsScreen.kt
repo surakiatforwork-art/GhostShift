@@ -51,6 +51,7 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
     val currentSoundUri = state.soundUri
     val currentTargetAt = state.timer.targetAt
+    var showResetTimerConfirmation by remember { mutableStateOf(false) }
     var inOutMin by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.inOutMinMinutes.toString()) }
     var inOutMax by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.inOutMaxMinutes?.toString().orEmpty()) }
     var outInMin by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.outInMinMinutes.toString()) }
@@ -172,7 +173,7 @@ fun SettingsScreen(
                             Spacer(Modifier.width(8.dp))
                             Text("ตั้งเวลา Target")
                         }
-                        OutlinedButton(onClick = onResetTimer) {
+                        OutlinedButton(onClick = { showResetTimerConfirmation = true }) {
                             Icon(Icons.Default.RestartAlt, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("รีเซ็ต")
@@ -308,6 +309,32 @@ fun SettingsScreen(
                  }
             }
         }
+    }
+
+    if (showResetTimerConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showResetTimerConfirmation = false },
+            title = { Text("รีเซ็ตเวลา?") },
+            text = {
+                Text("การรีเซ็ตจะยกเลิกเวลา Target และตารางเวลาการดาวน์โหลดที่กำลังใช้งานอยู่")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetTimerConfirmation = false
+                        onResetTimer()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                ) {
+                    Text("รีเซ็ต")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetTimerConfirmation = false }) {
+                    Text("ยกเลิก")
+                }
+            }
+        )
     }
 }
 

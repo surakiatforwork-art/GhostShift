@@ -16,8 +16,10 @@ import com.phantom.ghostshift.domain.TimerState
 import com.phantom.ghostshift.system.AlarmScheduler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -50,7 +52,15 @@ data class MainUiState(
     val scheduleSettings: ScheduleSettings = ScheduleSettings(),
 
     // clock (UI countdown only)
-    val currentTime: Long = System.currentTimeMillis()
+    val currentTime: Long = System.currentTimeMillis(),
+
+    // Keeps the Next action single-flight so rapid taps cannot export two photos.
+    val isExportingNext: Boolean = false
+)
+
+data class ExportHeadsUpEvent(
+    val tag: String,
+    val remark: String?
 )
 
 private data class AlarmKey(
@@ -66,6 +76,9 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val _now = MutableStateFlow(System.currentTimeMillis())
+    private val isExportingNext = MutableStateFlow(false)
+    private val _exportHeadsUpEvents = MutableSharedFlow<ExportHeadsUpEvent>(extraBufferCapacity = 1)
+    val exportHeadsUpEvents = _exportHeadsUpEvents.asSharedFlow()
 
     // cache to avoid rescheduling every time
     private var lastAlarmKey: AlarmKey? = null
@@ -137,8 +150,8 @@ class MainViewModel(
      * UI state: depends on clock ticker for countdown only.
      * IMPORTANT: schedule is not recomputed each second.
      */
-    val uiState: StateFlow<MainUiState> = combine(coreState, _now) { core, nowMillis ->
-        core.copy(currentTime = nowMillis)
+    val uiState: StateFlow<MainUiState> = combine(coreState, _now, isExportingNext) { core, nowMillis, exportingNext ->
+        core.copy(currentTime = nowMillis, isExportingNext = exportingNext)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MainUiState())
 
     init {
@@ -320,6 +333,10 @@ class MainViewModel(
         viewModelScope.launch { repo.swapPairContents(index) }
     }
 
+    fun savePairRemark(index: Int, remark: String) {
+        viewModelScope.launch { repo.savePairRemark(index, remark) }
+    }
+
     fun exportPhoto(photo: PhotoEntity) {
         viewModelScope.launch {
             repo.exportPhoto(photo)
@@ -327,15 +344,27 @@ class MainViewModel(
     }
 
     fun exportNextPhoto() {
+        if (!isExportingNext.compareAndSet(expect = false, update = true)) return
         val next = coreState.value.pendingPhotos.firstOrNull()
-        if (next != null) {
-            viewModelScope.launch {
+        if (next == null) {
+            isExportingNext.value = false
+            return
+        }
+        viewModelScope.launch {
+            try {
                 val currentTimer = prefs.timerState.first()
                 val settings = prefs.scheduleSettings.first()
                 if (next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
                     startTimerNow()
                 }
-                repo.exportPhoto(next)
+                val exported = repo.exportPhoto(next)
+                // Keep the action locked briefly so a double-tap cannot export the following photo.
+                delay(700)
+                if (exported) {
+                    _exportHeadsUpEvents.emit(ExportHeadsUpEvent(next.tag, next.remark))
+                }
+            } finally {
+                isExportingNext.value = false
             }
         }
     }
