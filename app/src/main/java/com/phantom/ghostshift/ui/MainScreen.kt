@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -576,33 +577,59 @@ fun StatusHeader(
                 }
             }
 
+            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val target = state.timer.targetAt
-                Column(Modifier.weight(1f)) {
-                    Text("Target", style = MaterialTheme.typography.labelSmall, color = MintMuted)
-                    Text(target?.let(::fmtTime) ?: "ยังไม่ได้ตั้ง", style = MaterialTheme.typography.labelLarge, color = MintText, maxLines = 1)
+                val nextAt = state.schedule.nextAt
+                val nextTag = state.schedule.nextTag
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.small,
+                    color = MintCardBg,
+                    border = BorderStroke(1.dp, MintLine)
+                ) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Text("Target", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+                        Text(
+                            target?.let(::fmtTime) ?: "ยังไม่ได้ตั้ง",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MintText,
+                            maxLines = 1
+                        )
+                    }
                 }
-                Column(Modifier.weight(1f)) {
-                    Text("เหลือเวลา", style = MaterialTheme.typography.labelSmall, color = MintMuted)
-                    Text(
-                        target?.let { fmtDuration(max(0L, it - state.currentTime)) } ?: "-",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MintAccent,
-                        maxLines = 1
-                    )
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.small,
+                    color = MintCardBg,
+                    border = BorderStroke(1.dp, MintLine)
+                ) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Text(nextTag?.let { "ถัดไป $it" } ?: "รูปถัดไป", style = MaterialTheme.typography.labelSmall, color = MintMuted)
+                        Text(
+                            nextAt?.let { fmtDuration(max(0L, it - state.currentTime)) } ?: "รอเริ่มเวลา",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MintAccent,
+                            maxLines = 1
+                        )
+                    }
                 }
                 Button(
                     onClick = onDownloadNext,
                     enabled = state.pendingPhotos.isNotEmpty(),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.width(136.dp).height(58.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
                 ) {
-                    Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Next")
+                    Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Next", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -789,31 +816,13 @@ private fun PhotoPairCard(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(Modifier.weight(0.60f)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-                PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-                }
-                if (!reorderMode && onSwap != null) {
-                    IconButton(
-                        onClick = onSwap,
-                        enabled = canSwap,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(22.dp)
-                            .background(MintCardBg, CircleShape)
-                    ) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Swap IN and OUT", modifier = Modifier.size(13.dp))
-                    }
-                }
-            }
-            Box(Modifier.weight(0.40f), contentAlignment = Alignment.Center) {
+            Box(Modifier.weight(0.25f), contentAlignment = Alignment.Center) {
                 if (reorderMode) {
                     Icon(
                         Icons.Default.DragHandle,
                         contentDescription = if (pair.isReorderable) "Drag to reorder" else "Pair cannot be reordered",
                         tint = if (pair.isReorderable) MintAccent else MintMuted,
-                        modifier = Modifier.size(26.dp)
+                        modifier = Modifier.size(30.dp)
                     )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -823,6 +832,24 @@ private fun PhotoPairCard(
                         IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(56.dp)) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(28.dp))
                         }
+                    }
+                }
+            }
+            Box(Modifier.weight(0.75f)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+                    PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+                }
+                if (!reorderMode && onSwap != null) {
+                    IconButton(
+                        onClick = onSwap,
+                        enabled = canSwap,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(56.dp)
+                            .background(MintCardBg, CircleShape)
+                    ) {
+                        Icon(Icons.Default.SwapHoriz, contentDescription = "Swap IN and OUT", modifier = Modifier.size(28.dp))
                     }
                 }
             }
