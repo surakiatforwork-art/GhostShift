@@ -55,8 +55,13 @@ class PhotoRepository(
         }
     }
 
-    suspend fun addPhotoFromUri(uri: Uri, tag: String, mirrorHorizontally: Boolean = false) {
-        processAndSave(uri, tag, mirrorHorizontally = mirrorHorizontally)
+    suspend fun addPhotoFromUri(
+        uri: Uri,
+        tag: String,
+        mirrorHorizontally: Boolean = false,
+        remark: String? = null
+    ) {
+        processAndSave(uri, tag, mirrorHorizontally = mirrorHorizontally, remark = remark)
     }
 
     suspend fun replacePhotoFromUri(id: Long, uri: Uri, mirrorHorizontally: Boolean = false) {
@@ -68,9 +73,11 @@ class PhotoRepository(
         uri: Uri,
         tag: String,
         replaceId: Long? = null,
-        mirrorHorizontally: Boolean = false
+        mirrorHorizontally: Boolean = false,
+        remark: String? = null
     ) {
         withContext(Dispatchers.IO) {
+            val normalizedRemark = remark?.trim()?.take(120)?.ifBlank { null }
             val (kind, idx) = tag.parseTag() ?: (Kind.IN to 0) // Should validation happen before? Yes.
             
             // Decode & Resize
@@ -92,7 +99,8 @@ class PhotoRepository(
                         filePath = file.absolutePath,
                         width = width,
                         height = height,
-                        editedAt = System.currentTimeMillis()
+                        editedAt = System.currentTimeMillis(),
+                        remark = normalizedRemark ?: it.remark
                     )
                     dao.upsert(updated) // Update
                 }
@@ -108,7 +116,8 @@ class PhotoRepository(
                     editedAt = null,
                     filePath = file.absolutePath,
                     width = width,
-                    height = height
+                    height = height,
+                    remark = normalizedRemark
                 )
                 dao.upsert(entity)
             }

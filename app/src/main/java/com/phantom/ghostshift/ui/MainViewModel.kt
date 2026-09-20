@@ -63,6 +63,11 @@ data class ExportHeadsUpEvent(
     val remark: String?
 )
 
+data class SharedPhotoInput(
+    val uri: Uri,
+    val remark: String?
+)
+
 private data class AlarmKey(
     val dueAt: Long,
     val tag: String,
@@ -326,6 +331,19 @@ class MainViewModel(
         if (pairIdsInOrder.isEmpty()) return
         viewModelScope.launch {
             repo.reorderCompletePendingPairs(pairIdsInOrder)
+        }
+    }
+
+    /** Imports images shared by Time Keeper in the exact order chosen by the user. */
+    fun addSharedPhotos(inputs: List<SharedPhotoInput>) {
+        if (inputs.isEmpty()) return
+
+        viewModelScope.launch {
+            for (input in inputs) {
+                val current = repo.allPhotosNowSorted()
+                val nextTag = SlotManager.computeNextSlot(current.map { it.toSchedulePhoto() })
+                repo.addPhotoFromUri(input.uri, nextTag, remark = input.remark)
+            }
         }
     }
 
