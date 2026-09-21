@@ -63,7 +63,8 @@ fun NextCountdownCard(
     modifier: Modifier = Modifier
 ) {
     val duration = nextAt?.let { dueAt -> intervalStartedAt?.let { dueAt - it } } ?: 0L
-    val remaining = nextAt?.let { (it - now).coerceAtLeast(0L) } ?: 0L
+    val rawRemaining = nextAt?.let { it - now } ?: 0L
+    val remaining = rawRemaining.coerceAtLeast(0L)
     val elapsedProgress = if (duration > 0L) ((duration - remaining).toFloat() / duration).coerceIn(0f, 1f) else 0f
     val isDue = nextAt != null && remaining == 0L
     val pulseTransition = rememberInfiniteTransition(label = "dueRingPulse")
@@ -92,7 +93,11 @@ fun NextCountdownCard(
                 }
             }
             Text(
-                if (nextAt != null) formatDuration(remaining) else "-",
+                when {
+                    nextAt == null -> "-"
+                    rawRemaining < 0L -> "-${formatDuration(-rawRemaining)}"
+                    else -> formatDuration(remaining)
+                },
                 color = if (isDue) MintDanger else MintText,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
