@@ -344,6 +344,24 @@ class PhotoRepository(
         }
     }
 
+    suspend fun deletePendingPairAndShift(index: Int): Boolean {
+        return withContext(Dispatchers.IO) {
+            val allBeforeDelete = dao.getAllSortedByIdxOnce().sortedBySlot()
+            val pair = allBeforeDelete.filter { it.idx == index }
+            if (pair.size != 2 || pair.any { it.downloadedAt != null }) return@withContext false
+
+            pair.forEach { photo ->
+                try { File(photo.filePath).delete() } catch (_: Exception) {}
+                dao.delete(photo)
+            }
+
+            val allAfterDelete = dao.getAllSortedByIdxOnce().sortedBySlot()
+            val pendingAfterDelete = allAfterDelete.filter { it.downloadedAt == null }
+            resequencePendingList(allAfterDelete, pendingAfterDelete)
+            true
+        }
+    }
+
     /**
      * Reorders only complete, unexported pairs. Incomplete/exported pairs retain their slot
      * so an already exported IN/OUT image can never become paired with a different photo.

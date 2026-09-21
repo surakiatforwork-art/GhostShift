@@ -281,6 +281,21 @@ fun SettingsScreen(
                          )
                     }
 
+                    // Overlay alert
+                    val canDrawOverlays = Settings.canDrawOverlays(context)
+                    PermissionRow(
+                        title = "Alarm Popup Overlay",
+                        desc = "Show a tappable popup and stop its sound when a photo is due",
+                        isGranted = canDrawOverlays,
+                        onClick = {
+                            if (!canDrawOverlays) {
+                                context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                })
+                            }
+                        }
+                    )
+
                     // Battery
                     PermissionRow(
                         title = "Battery Optimization",

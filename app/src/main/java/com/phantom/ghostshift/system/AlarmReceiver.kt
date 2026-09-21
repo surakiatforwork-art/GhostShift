@@ -21,7 +21,11 @@ class AlarmReceiver : BroadcastReceiver() {
             "ครบเวลา Check In ได้แล้ว"
         }
         val body = "Next: $nextTag"
-        NotificationHelper.showAlarmNotification(context, title, body, soundUri)
+        val showOverlay = AlertOverlayController.canShow(context)
+        NotificationHelper.showAlarmNotification(context, title, body, soundUri, silent = showOverlay)
+        if (showOverlay) {
+            AlertOverlayController.show(context, nextTag, null, soundUri)
+        }
         
         // 2. Headless Reschedule (Strict Rule A1)
         // Must run in background scope

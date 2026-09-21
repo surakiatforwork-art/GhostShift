@@ -25,10 +25,10 @@ object NotificationHelper {
         }
     }
 
-    fun ensureChannelExists(context: Context, soundUri: String?) {
+    fun ensureChannelExists(context: Context, soundUri: String?, silent: Boolean = false) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
 
-        val channelId = getChannelId(soundUri)
+        val channelId = if (silent) "channel_alarm_silent" else getChannelId(soundUri)
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         
         if (manager.getNotificationChannel(channelId) != null) return
@@ -42,7 +42,7 @@ object NotificationHelper {
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 500, 200, 500) // Vibration pattern
             
-            if (!soundUri.isNullOrBlank()) {
+            if (!silent && !soundUri.isNullOrBlank()) {
                 val uri = Uri.parse(soundUri)
                 val audioAttributes = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -54,9 +54,9 @@ object NotificationHelper {
         manager.createNotificationChannel(channel)
     }
 
-    fun showAlarmNotification(context: Context, title: String, body: String, soundUri: String?) {
-        ensureChannelExists(context, soundUri)
-        val channelId = getChannelId(soundUri)
+    fun showAlarmNotification(context: Context, title: String, body: String, soundUri: String?, silent: Boolean = false) {
+        ensureChannelExists(context, soundUri, silent)
+        val channelId = if (silent) "channel_alarm_silent" else getChannelId(soundUri)
 
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -75,7 +75,7 @@ object NotificationHelper {
             .setAutoCancel(true)
             
         // For pre-Oero, set sound manually on builder logic? (Deprecated but compat)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !soundUri.isNullOrBlank()) {
+        if (!silent && Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !soundUri.isNullOrBlank()) {
             builder.setSound(Uri.parse(soundUri))
             builder.setVibrate(longArrayOf(0, 500, 200, 500))
         }

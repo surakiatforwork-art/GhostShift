@@ -88,6 +88,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var confirmResetTimer by remember { mutableStateOf(false) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
     var confirmDeletePendingPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
+    var confirmDeletePendingPair by remember { mutableStateOf<PhotoPair?>(null) }
     var editChoicePair by remember { mutableStateOf<PhotoPair?>(null) }
     var deleteChoicePair by remember { mutableStateOf<PhotoPair?>(null) }
     var reorderMode by remember { mutableStateOf(false) }
@@ -295,6 +296,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onSelected = { photo ->
                 deleteChoicePair = null
                 confirmDeletePendingPhoto = photo
+            },
+            onDeleteBoth = {
+                deleteChoicePair = null
+                confirmDeletePendingPair = pair
             }
         )
     }
@@ -527,6 +532,31 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         )
     }
 
+    if (confirmDeletePendingPair != null) {
+        val pair = confirmDeletePendingPair!!
+        AlertDialog(
+            onDismissRequest = { confirmDeletePendingPair = null },
+            title = { Text("ลบทั้งคู่ IN-${pair.index} และ OUT-${pair.index}") },
+            text = { Text("รูป pending ทั้ง 2 รูปจะถูกลบ และรูป pending ถัดไปจะเลื่อนลำดับมาแทนที่อัตโนมัติ\n\nยืนยันหรือไม่?") },
+            containerColor = MintCardBg,
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDeletePendingPair = null
+                        viewModel.deletePendingPair(pair.index)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                ) { Text("ลบทั้ง 2 รูป") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmDeletePendingPair = null },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                ) { Text("ยกเลิก") }
+            }
+        )
+    }
+
     if (confirmResetTimer) {
         AlertDialog(
             onDismissRequest = { confirmResetTimer = false },
@@ -622,23 +652,11 @@ fun StatusHeader(
                 val target = state.timer.targetAt
                 val nextAt = state.schedule.nextAt
                 val nextTag = state.schedule.nextTag
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    shape = MaterialTheme.shapes.small,
-                    color = MintCardBg,
-                    border = BorderStroke(1.dp, MintLine)
-                ) {
-                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                        Text("Target", style = MaterialTheme.typography.labelSmall, color = MintMuted)
-                        Text(
-                            target?.let(::fmtTime) ?: "ยังไม่ได้ตั้ง",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MintText,
-                            maxLines = 1
-                        )
-                    }
-                }
+                TargetProgressCard(
+                    targetAt = target,
+                    progress = state.targetCoverageProgress,
+                    modifier = Modifier.weight(1f)
+                )
                 Surface(
                     modifier = Modifier.weight(1f),
                     shape = MaterialTheme.shapes.small,
@@ -674,6 +692,7 @@ fun StatusHeader(
             }
         }
     }
+
 }
 
 @Composable
@@ -996,7 +1015,8 @@ private fun PhotoChoiceDialog(
     allowDownloaded: Boolean,
     onRemarkSaved: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
-    onSelected: (PhotoEntity) -> Unit
+    onSelected: (PhotoEntity) -> Unit,
+    onDeleteBoth: (() -> Unit)? = null
 ) {
     var remark by remember(pair.index, pair.remark) { mutableStateOf(pair.remark.orEmpty()) }
     AlertDialog(
@@ -1024,6 +1044,15 @@ private fun PhotoChoiceDialog(
                             modifier = Modifier.weight(1f)
                         ) { Text(label) }
                     }
+                }
+                if (onDeleteBoth != null) {
+                    Button(
+                        onClick = onDeleteBoth,
+                        enabled = pair.inPhoto?.downloadedAt == null && pair.outPhoto?.downloadedAt == null &&
+                            pair.inPhoto != null && pair.outPhoto != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MintDanger, contentColor = Color.White)
+                    ) { Text("ลบทั้ง 2 รูป") }
                 }
             }
         },

@@ -50,6 +50,7 @@ data class MainUiState(
     // settings
     val soundUri: String? = null,
     val scheduleSettings: ScheduleSettings = ScheduleSettings(),
+    val targetCoverageProgress: Float = 0f,
 
     // clock (UI countdown only)
     val currentTime: Long = System.currentTimeMillis(),
@@ -131,6 +132,15 @@ class MainViewModel(
             !timer.running -> ScheduleResult(ok = false, warn = "ยังไม่เริ่มจับเวลา")
             else -> ScheduleCalculator.computeScheduleExactFit(domainPhotos, timer, settings)
         }
+        val coverageBase = all.filter { it.downloadedAt != null }
+            .maxByOrNull { it.downloadedAt ?: Long.MIN_VALUE }?.downloadedAt
+            ?: timer.startAt
+            ?: System.currentTimeMillis()
+        val coverageEnd = schedule.items.lastOrNull()?.planAt ?: coverageBase
+        val targetCoverage = timer.targetAt?.let { target ->
+            val duration = target - coverageBase
+            if (duration <= 0L) 0f else ((coverageEnd - coverageBase).toFloat() / duration).coerceIn(0f, 1f)
+        } ?: 0f
 
         MainUiState(
             pendingPhotos = pending,
@@ -147,6 +157,7 @@ class MainViewModel(
             gateOpen = gateOpen,
             soundUri = sound,
             scheduleSettings = settings,
+            targetCoverageProgress = targetCoverage,
             currentTime = System.currentTimeMillis() // will be overridden by uiState combine with _now
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, MainUiState())
@@ -317,6 +328,12 @@ class MainViewModel(
     fun deletePendingPhoto(photoId: Long) {
         viewModelScope.launch {
             repo.deletePendingPhotoAndShift(photoId)
+        }
+    }
+
+    fun deletePendingPair(index: Int) {
+        viewModelScope.launch {
+            repo.deletePendingPairAndShift(index)
         }
     }
 
