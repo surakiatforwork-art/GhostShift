@@ -644,7 +644,8 @@ fun StatusHeader(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                // Align Next with the ring itself, not with the labels below the rings.
+                verticalAlignment = Alignment.Top
             ) {
                 val target = state.timer.targetAt
                 val nextAt = state.schedule.nextAt
