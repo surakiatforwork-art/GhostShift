@@ -3,7 +3,9 @@ package com.phantom.ghostshift.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -30,17 +32,24 @@ import java.util.Locale
 
 @Composable
 fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.size(82.dp), contentAlignment = Alignment.Center) {
-        if (targetAt == null) {
-            Text("Target\nยังไม่ได้ตั้ง", color = MintText, style = MaterialTheme.typography.labelSmall)
-            return
+    Column(
+        modifier = modifier.width(72.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+            if (targetAt == null) {
+                Text("-", color = MintText, style = MaterialTheme.typography.labelLarge)
+            } else {
+                // Keep the canvas inset so the thick stroke is never clipped by its bounds.
+                Canvas(Modifier.size(60.dp)) {
+                    val stroke = Stroke(width = 8.dp.toPx())
+                    drawArc(MintLine, -90f, 360f, false, style = stroke)
+                    drawArc(Color(0xFF24B883), -90f, 360f * progress, false, style = stroke)
+                }
+                Text(formatTime(targetAt), color = MintText, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            }
         }
-        Canvas(Modifier.size(82.dp)) {
-            val stroke = Stroke(width = 8.dp.toPx())
-            drawArc(MintLine, -90f, 360f, false, style = stroke)
-            drawArc(Color(0xFF24B883), -90f, 360f * progress, false, style = stroke)
-        }
-        Text(formatTime(targetAt), color = MintText, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text("Target", color = MintMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
@@ -70,29 +79,32 @@ fun NextCountdownCard(
     }
     val ringColor = lerp(MintAccent, MintDanger, elapsedProgress).copy(alpha = dueAlpha)
 
-    Box(modifier = modifier.size(82.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(82.dp)) {
-            val stroke = Stroke(width = 8.dp.toPx())
-            drawArc(MintLine, -90f, 360f, false, style = stroke)
-            if (nextAt != null) {
-                drawArc(ringColor, -90f, if (isDue) 360f else 360f * elapsedProgress, false, style = stroke)
+    Column(
+        modifier = modifier.width(72.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(60.dp)) {
+                val stroke = Stroke(width = 8.dp.toPx())
+                drawArc(MintLine, -90f, 360f, false, style = stroke)
+                if (nextAt != null) {
+                    drawArc(ringColor, -90f, if (isDue) 360f else 360f * elapsedProgress, false, style = stroke)
+                }
             }
-        }
-        androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 if (nextAt != null) formatDuration(remaining) else "-",
                 color = if (isDue) MintDanger else MintText,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
-            Text(
-                nextTag?.let { "ถัดไป $it" } ?: "รูปถัดไป",
-                color = MintMuted,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1
-            )
         }
+        Text(
+            nextTag?.let { "ถัดไป $it" } ?: "รูปถัดไป",
+            color = MintMuted,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
     }
 }
 

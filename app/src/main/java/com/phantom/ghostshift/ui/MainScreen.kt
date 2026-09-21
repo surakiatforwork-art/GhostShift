@@ -348,14 +348,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         ) {
             item {
                 SectionHeaderCard(
-                    title = "Pending (ยังไม่ Export)",
+                    title = "",
                     count = pendingPairs.size,
-                    hint = when {
-                        pendingPairs.isEmpty() -> "ยังไม่มีรายการ Pending"
-                        reorderMode -> "ลากการ์ดเพื่อเปลี่ยนลำดับ แล้วกด เสร็จสิ้น เพื่อบันทึก"
-                        else -> "แตะรูปเพื่อขยายดู"
-                    },
+                    hint = "",
                     actionText = if (reorderMode) "เสร็จสิ้น" else "จัดเรียง",
+                    compactActionOnly = true,
                     onAction = {
                         if (reorderMode) {
                             viewModel.reorderCompletePendingPairs(
@@ -672,7 +669,7 @@ fun StatusHeader(
                 Button(
                     onClick = onDownloadNext,
                     enabled = state.pendingPhotos.isNotEmpty() && !state.isExportingNext,
-                    modifier = Modifier.weight(1f).height(76.dp),
+                    modifier = Modifier.weight(1f).height(64.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
                 ) {
@@ -825,9 +822,18 @@ private fun SectionHeaderCard(
     count: Int,
     hint: String,
     actionText: String? = null,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    compactActionOnly: Boolean = false
 ) {
-    MintCard(contentPadding = 8.dp) {
+    MintCard(contentPadding = if (compactActionOnly) 2.dp else 8.dp) {
+        if (compactActionOnly && !actionText.isNullOrBlank() && onAction != null) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onAction) {
+                    Text(actionText, color = MintAccent)
+                }
+            }
+            return@MintCard
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
