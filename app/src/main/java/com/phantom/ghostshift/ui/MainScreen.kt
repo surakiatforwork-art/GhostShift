@@ -9,9 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -470,12 +469,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
         exportHeadsUp?.let { event ->
-            ExportHeadsUpBanner(
+            ExportSuccessFeedback(
                 event = event,
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 12.dp, start = 16.dp, end = 16.dp)
-                    .zIndex(2f)
+                    .fillMaxSize()
+                    .zIndex(2f),
+                onFinished = { exportHeadsUp = null }
             )
         }
     }
@@ -1072,32 +1071,65 @@ private fun PhotoChoiceDialog(
 }
 
 @Composable
-private fun ExportHeadsUpBanner(event: ExportHeadsUpEvent, modifier: Modifier = Modifier) {
+private fun ExportSuccessFeedback(
+    event: ExportHeadsUpEvent,
+    modifier: Modifier = Modifier,
+    onFinished: () -> Unit
+) {
     val readableText = buildString {
         append("ส่งออก ${event.tag} สำเร็จ")
         event.remark?.takeIf { it.isNotBlank() }?.let { append(", หมายเหตุ $it") }
     }
-    AnimatedVisibility(
-        visible = true,
-        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-        modifier = modifier
-    ) {
-        Surface(
-            color = MintAccent,
-            shape = MaterialTheme.shapes.medium,
-            shadowElevation = 8.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics {
-                    contentDescription = readableText
-                    liveRegion = LiveRegionMode.Assertive
-                }
-        ) {
-            Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
-                Text("บันทึกภาพแล้ว", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Text(event.tag, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                event.remark?.takeIf { it.isNotBlank() }?.let { remark ->
-                    Text(remark, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+    val travel = remember(event) { Animatable(0f) }
+    var showPopup by remember(event) { mutableStateOf(false) }
+
+    LaunchedEffect(event) {
+        travel.snapTo(0f)
+        showPopup = false
+        travel.animateTo(1f, animationSpec = tween(650, easing = FastOutSlowInEasing))
+        showPopup = true
+        delay(2_600)
+        onFinished()
+    }
+
+    BoxWithConstraints(modifier) {
+        if (!showPopup) {
+            val dropletSize = 16.dp + (32.dp * travel.value)
+            val travelDistance = (maxHeight - 250.dp).coerceAtLeast(0.dp)
+            // The droplet starts over the Next button then lands above the bottom navigation.
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = (maxWidth * 0.75f) - (dropletSize / 2),
+                        y = 92.dp + (travelDistance * travel.value)
+                    )
+                    .size(dropletSize)
+                    .graphicsLayer {
+                        scaleX = 0.8f + (travel.value * 0.2f)
+                        scaleY = 1.15f - (travel.value * 0.15f)
+                    }
+                    .background(MintAccent, CircleShape)
+            )
+        } else {
+            Surface(
+                color = MintAccent,
+                shape = MaterialTheme.shapes.medium,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 16.dp, end = 16.dp, bottom = 92.dp)
+                    .fillMaxWidth()
+                    .semantics {
+                        contentDescription = readableText
+                        liveRegion = LiveRegionMode.Assertive
+                    }
+            ) {
+                Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+                    Text("บันทึกภาพแล้ว", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text(event.tag, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    event.remark?.takeIf { it.isNotBlank() }?.let { remark ->
+                        Text(remark, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
         }
