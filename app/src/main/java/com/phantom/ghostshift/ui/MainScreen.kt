@@ -652,41 +652,37 @@ fun StatusHeader(
                 val target = state.timer.targetAt
                 val nextAt = state.schedule.nextAt
                 val nextTag = state.schedule.nextTag
-                TargetProgressCard(
-                    targetAt = target,
-                    progress = state.targetCoverageProgress,
-                    modifier = Modifier.weight(1f)
-                )
-                Surface(
+                val intervalStartedAt = state.downloadedPhotos
+                    .maxOfOrNull { it.downloadedAt ?: Long.MIN_VALUE }
+                    ?.takeIf { it != Long.MIN_VALUE }
+                    ?: state.timer.startAt
+                Row(
                     modifier = Modifier.weight(1f),
-                    shape = MaterialTheme.shapes.small,
-                    color = MintCardBg,
-                    border = BorderStroke(1.dp, MintLine)
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                        Text(nextTag?.let { "ถัดไป $it" } ?: "รูปถัดไป", style = MaterialTheme.typography.labelSmall, color = MintMuted)
-                        Text(
-                            nextAt?.let { fmtDuration(max(0L, it - state.currentTime)) } ?: "รอเริ่มเวลา",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MintAccent,
-                            maxLines = 1
-                        )
-                    }
+                    TargetProgressCard(targetAt = target, progress = state.targetCoverageProgress)
+                    NextCountdownCard(
+                        nextTag = nextTag,
+                        nextAt = nextAt,
+                        intervalStartedAt = intervalStartedAt,
+                        now = state.currentTime
+                    )
                 }
                 Button(
                     onClick = onDownloadNext,
                     enabled = state.pendingPhotos.isNotEmpty() && !state.isExportingNext,
-                    modifier = Modifier.width(136.dp).height(58.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                    modifier = Modifier.weight(1f).height(76.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
                 ) {
-                    Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(22.dp))
-                    Spacer(Modifier.width(6.dp))
+                    Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         if (state.isExportingNext) "กำลังบันทึก" else "Next",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }
