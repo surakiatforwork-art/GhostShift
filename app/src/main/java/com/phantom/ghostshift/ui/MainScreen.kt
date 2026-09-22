@@ -632,19 +632,12 @@ fun StatusHeader(
                 val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
                 MintBadge(text = badgeText, type = if (state.gateOpen) "ok" else "wait")
                 Spacer(Modifier.width(8.dp))
-                ClayIconButton(
-                    onClick = onDeleteAll,
-                    icon = Icons.Default.DeleteOutline,
-                    contentDescription = "Delete all",
-                    tint = MintDanger,
-                    modifier = Modifier.size(36.dp)
-                )
-                ClayIconButton(
-                    onClick = onSettings,
-                    icon = Icons.Default.Settings,
-                    contentDescription = "Settings",
-                    modifier = Modifier.size(36.dp)
-                )
+                IconButton(onClick = onDeleteAll, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete all", tint = MintDanger, modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MintText, modifier = Modifier.size(20.dp))
+                }
             }
 
             Spacer(Modifier.height(8.dp))
