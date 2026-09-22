@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +34,7 @@ import com.phantom.ghostshift.ui.theme.MintClayShadow
 import com.phantom.ghostshift.ui.theme.MintDanger
 import com.phantom.ghostshift.ui.theme.MintLine
 import com.phantom.ghostshift.ui.theme.MintMuted
+import com.phantom.ghostshift.ui.theme.MintSoft
 import com.phantom.ghostshift.ui.theme.MintText
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -49,7 +51,7 @@ fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Mo
                 .size(68.dp)
                 .shadow(9.dp, CircleShape, spotColor = MintClayShadow)
                 .clip(CircleShape)
-                .background(MintCardBg)
+                .background(Brush.verticalGradient(listOf(MintClayHighlight, MintCardBg, MintSoft)))
                 .border(1.dp, MintClayHighlight, CircleShape),
             contentAlignment = Alignment.Center
         ) {
@@ -105,7 +107,7 @@ fun NextCountdownCard(
                 .size(68.dp)
                 .shadow(9.dp, CircleShape, spotColor = MintClayShadow)
                 .clip(CircleShape)
-                .background(MintCardBg)
+                .background(Brush.verticalGradient(listOf(MintClayHighlight, MintCardBg, MintSoft)))
                 .border(1.dp, MintClayHighlight, CircleShape),
             contentAlignment = Alignment.Center
         ) {

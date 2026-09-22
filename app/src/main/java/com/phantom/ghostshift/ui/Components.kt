@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -59,7 +60,7 @@ fun ClayIconButton(
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed && enabled) 0.94f else 1f, tween(110), label = "clayIconPress")
     Surface(
-        color = MintCardBg,
+        color = Color.Transparent,
         contentColor = tint,
         shape = RoundedCornerShape(18.dp),
         shadowElevation = 7.dp,
@@ -70,6 +71,7 @@ fun ClayIconButton(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(MintClayHighlight, MintCardBg, MintSoft)))
                 .clickable(enabled = enabled, interactionSource = interaction, indication = null, onClick = onClick)
         ) {
             Icon(icon, contentDescription = contentDescription, tint = if (enabled) tint else MintMuted2)
@@ -89,10 +91,14 @@ fun ClayActionButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed && enabled) 0.96f else 1f, tween(110), label = "clayActionPress")
-    val background = if (danger) MintErrBg else MintAccent
     val foreground = if (danger) MintDanger else Color.White
+    val clayGradient = if (danger) {
+        Brush.verticalGradient(listOf(Color(0xFFFFFCFC), MintErrBg, Color(0xFFFFDFDF)))
+    } else {
+        Brush.verticalGradient(listOf(Color(0xFF42D4B4), MintAccent, Color(0xFF159C80)))
+    }
     Surface(
-        color = background,
+        color = Color.Transparent,
         contentColor = foreground,
         shape = RoundedCornerShape(24.dp),
         shadowElevation = if (enabled) 8.dp else 0.dp,
@@ -102,6 +108,7 @@ fun ClayActionButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .background(clayGradient)
                 .clickable(enabled = enabled, interactionSource = interaction, indication = null, onClick = onClick)
                 .padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.Center,
@@ -150,7 +157,6 @@ fun MintButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    primary: Boolean = false,
     danger: Boolean = false,
     enabled: Boolean = true
 ) {

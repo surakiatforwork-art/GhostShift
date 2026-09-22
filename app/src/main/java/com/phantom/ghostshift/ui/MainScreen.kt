@@ -21,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
@@ -817,7 +818,13 @@ private fun SectionHeaderCard(
     MintCard(contentPadding = if (compactActionOnly) 2.dp else 8.dp) {
         if (compactActionOnly && !actionText.isNullOrBlank() && onAction != null) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                ClayActionButton(text = actionText, onClick = onAction, modifier = Modifier.height(38.dp))
+                TextButton(
+                    onClick = onAction,
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.textButtonColors(containerColor = MintSoft, contentColor = MintOkText),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) { Text(actionText, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelSmall) }
             }
             return@MintCard
         }
@@ -835,7 +842,13 @@ private fun SectionHeaderCard(
             MintBadge(text = "$count", type = if (count > 0) "ok" else "wait")
             if (!actionText.isNullOrBlank() && onAction != null) {
                 Spacer(Modifier.width(8.dp))
-                ClayActionButton(text = actionText, onClick = onAction, modifier = Modifier.height(38.dp))
+                TextButton(
+                    onClick = onAction,
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.textButtonColors(containerColor = MintSoft, contentColor = MintOkText),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) { Text(actionText, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelSmall) }
             }
         }
         Text(hint, style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
@@ -873,21 +886,12 @@ private fun PhotoPairCard(
                         )
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            ClayIconButton(
-                                onClick = { onEdit?.invoke() },
-                                enabled = onEdit != null,
-                                icon = Icons.Default.Edit,
-                                contentDescription = "Edit",
-                                modifier = Modifier.size(52.dp)
-                            )
-                            ClayIconButton(
-                                onClick = { onDelete?.invoke() },
-                                enabled = onDelete != null,
-                                icon = Icons.Default.Delete,
-                                contentDescription = "Delete",
-                                tint = MintDanger,
-                                modifier = Modifier.size(52.dp)
-                            )
+                            IconButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(26.dp))
+                            }
+                            IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(26.dp))
+                            }
                         }
                     }
                 }
@@ -897,16 +901,13 @@ private fun PhotoPairCard(
                         PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
                     }
                     if (!reorderMode && onSwap != null) {
-                        IconButton(
+                        ClayIconButton(
                             onClick = onSwap,
                             enabled = canSwap,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(48.dp)
-                                .background(MintCardBg, CircleShape)
-                        ) {
-                            Icon(Icons.Default.SwapHoriz, contentDescription = "Swap IN and OUT", modifier = Modifier.size(24.dp))
-                        }
+                            icon = Icons.Default.SwapHoriz,
+                            contentDescription = "Swap IN and OUT",
+                            modifier = Modifier.align(Alignment.Center).size(50.dp)
+                        )
                     }
                 }
             }
