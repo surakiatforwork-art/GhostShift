@@ -1,6 +1,9 @@
 package com.phantom.ghostshift.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
@@ -16,12 +19,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phantom.ghostshift.ui.theme.MintAccent
+import com.phantom.ghostshift.ui.theme.MintCardBg
+import com.phantom.ghostshift.ui.theme.MintClayHighlight
+import com.phantom.ghostshift.ui.theme.MintClayShadow
 import com.phantom.ghostshift.ui.theme.MintDanger
 import com.phantom.ghostshift.ui.theme.MintLine
 import com.phantom.ghostshift.ui.theme.MintMuted
@@ -36,7 +44,15 @@ fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Mo
         modifier = modifier.width(72.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(68.dp)
+                .shadow(9.dp, CircleShape, spotColor = MintClayShadow)
+                .clip(CircleShape)
+                .background(MintCardBg)
+                .border(1.dp, MintClayHighlight, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
             if (targetAt == null) {
                 Text("-", color = MintText, style = MaterialTheme.typography.labelLarge)
             } else {
@@ -84,7 +100,15 @@ fun NextCountdownCard(
         modifier = modifier.width(72.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(68.dp)
+                .shadow(9.dp, CircleShape, spotColor = MintClayShadow)
+                .clip(CircleShape)
+                .background(MintCardBg)
+                .border(1.dp, MintClayHighlight, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
             Canvas(Modifier.size(60.dp)) {
                 val stroke = Stroke(width = 8.dp.toPx())
                 drawArc(MintLine, -90f, 360f, false, style = stroke)

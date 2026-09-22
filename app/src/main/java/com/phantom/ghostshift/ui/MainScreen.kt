@@ -631,12 +631,19 @@ fun StatusHeader(
                 val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
                 MintBadge(text = badgeText, type = if (state.gateOpen) "ok" else "wait")
                 Spacer(Modifier.width(8.dp))
-                IconButton(onClick = onDeleteAll, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete all", tint = MintDanger, modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MintText, modifier = Modifier.size(20.dp))
-                }
+                ClayIconButton(
+                    onClick = onDeleteAll,
+                    icon = Icons.Default.DeleteOutline,
+                    contentDescription = "Delete all",
+                    tint = MintDanger,
+                    modifier = Modifier.size(36.dp)
+                )
+                ClayIconButton(
+                    onClick = onSettings,
+                    icon = Icons.Default.Settings,
+                    contentDescription = "Settings",
+                    modifier = Modifier.size(36.dp)
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -666,22 +673,13 @@ fun StatusHeader(
                         now = state.currentTime
                     )
                 }
-                Button(
+                ClayActionButton(
+                    text = if (state.isExportingNext) "กำลังบันทึก" else "Next",
                     onClick = onDownloadNext,
                     enabled = state.pendingPhotos.isNotEmpty() && !state.isExportingNext,
-                    modifier = Modifier.weight(1f).height(64.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
-                ) {
-                    Icon(Icons.Default.DownloadForOffline, contentDescription = null, modifier = Modifier.size(26.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (state.isExportingNext) "กำลังบันทึก" else "Next",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
+                    icon = Icons.Default.DownloadForOffline,
+                    modifier = Modifier.weight(1f).height(64.dp)
+                )
             }
         }
     }
@@ -783,34 +781,25 @@ fun StickyBottomBar(
                 }
                 val btnLabel = if (!state.timer.running) "Start (Finish ${fmtTime(displayTarget)})" else "Running..."
 
-                Button(
+                ClayActionButton(
+                    text = btnLabel,
                     onClick = onStart,
                     enabled = state.canStartTimer,
-                    modifier = Modifier.weight(1.5f),
-                    colors = ButtonDefaults.buttonColors(containerColor = MintAccent, contentColor = Color.White)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(btnLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-
-                OutlinedButton(
+                    icon = Icons.Default.PlayArrow,
+                    modifier = Modifier.weight(1.5f).height(48.dp)
+                )
+                ClayIconButton(
                     onClick = onCam,
-                    modifier = Modifier.weight(0.8f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
-                    contentPadding = PaddingValues(0.dp)
-                ) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = "Cam")
-                }
-
-                OutlinedButton(
+                    icon = Icons.Default.PhotoCamera,
+                    contentDescription = "Cam",
+                    modifier = Modifier.weight(0.8f).height(48.dp)
+                )
+                ClayIconButton(
                     onClick = onUpload,
-                    modifier = Modifier.weight(0.8f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintText),
-                    contentPadding = PaddingValues(0.dp)
-                ) {
-                    Icon(Icons.Default.Upload, contentDescription = "Up")
-                }
+                    icon = Icons.Default.Upload,
+                    contentDescription = "Up",
+                    modifier = Modifier.weight(0.8f).height(48.dp)
+                )
             }
         }
     }
@@ -828,9 +817,7 @@ private fun SectionHeaderCard(
     MintCard(contentPadding = if (compactActionOnly) 2.dp else 8.dp) {
         if (compactActionOnly && !actionText.isNullOrBlank() && onAction != null) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onAction) {
-                    Text(actionText, color = MintAccent)
-                }
+                ClayActionButton(text = actionText, onClick = onAction, modifier = Modifier.height(38.dp))
             }
             return@MintCard
         }
@@ -848,9 +835,7 @@ private fun SectionHeaderCard(
             MintBadge(text = "$count", type = if (count > 0) "ok" else "wait")
             if (!actionText.isNullOrBlank() && onAction != null) {
                 Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onAction) {
-                    Text(actionText, color = MintAccent)
-                }
+                ClayActionButton(text = actionText, onClick = onAction, modifier = Modifier.height(38.dp))
             }
         }
         Text(hint, style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
@@ -888,12 +873,21 @@ private fun PhotoPairCard(
                         )
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            IconButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.size(56.dp)) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(28.dp))
-                            }
-                            IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(56.dp)) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(28.dp))
-                            }
+                            ClayIconButton(
+                                onClick = { onEdit?.invoke() },
+                                enabled = onEdit != null,
+                                icon = Icons.Default.Edit,
+                                contentDescription = "Edit",
+                                modifier = Modifier.size(52.dp)
+                            )
+                            ClayIconButton(
+                                onClick = { onDelete?.invoke() },
+                                enabled = onDelete != null,
+                                icon = Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                tint = MintDanger,
+                                modifier = Modifier.size(52.dp)
+                            )
                         }
                     }
                 }
