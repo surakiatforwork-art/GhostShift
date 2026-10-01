@@ -32,7 +32,7 @@ class RescheduleReceiver : BroadcastReceiver() {
                 // Use stored soundUri or null if not set
                 
                 if (dueAt != null && nextTag != null && dueAt > System.currentTimeMillis()) {
-                     scheduler.scheduleExact(dueAt, nextTag, soundUri, repeatSound) 
+                     scheduler.scheduleExact(dueAt, nextTag, soundUri, repeatSound)
                      Log.d("RescheduleReceiver", "Rescheduled $nextTag at $dueAt")
                 }
             } catch (e: Exception) {
