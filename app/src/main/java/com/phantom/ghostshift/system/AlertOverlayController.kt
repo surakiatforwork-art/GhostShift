@@ -23,7 +23,7 @@ object AlertOverlayController {
 
     fun canShow(context: Context): Boolean = Settings.canDrawOverlays(context)
 
-    fun show(context: Context, tag: String, remark: String?, soundUri: String?) {
+    fun show(context: Context, tag: String, remark: String?, soundUri: String?, repeatSound: Boolean) {
         if (!canShow(context)) return
         dismiss(context)
         val appContext = context.applicationContext
@@ -64,7 +64,7 @@ object AlertOverlayController {
             windowManager = appContext.getSystemService(WindowManager::class.java)
             windowManager?.addView(panel, params)
             overlay = panel
-            playSound(appContext, soundUri)
+            playSound(appContext, soundUri, repeatSound)
         }
     }
 
@@ -76,10 +76,10 @@ object AlertOverlayController {
         ringtone = null
     }
 
-    private fun playSound(context: Context, soundUri: String?) {
+    private fun playSound(context: Context, soundUri: String?, repeatSound: Boolean) {
         val uri = soundUri?.let(Uri::parse) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
         ringtone = RingtoneManager.getRingtone(context, uri)?.also {
-            runCatching { it.isLooping = true }
+            runCatching { it.isLooping = repeatSound }
             it.play()
         }
     }

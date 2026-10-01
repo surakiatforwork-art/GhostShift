@@ -11,6 +11,7 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val nextTag = intent.getStringExtra("EXTRA_NEXT_TAG") ?: ""
         val soundUri = intent.getStringExtra("EXTRA_SOUND_URI")
+        val repeatSound = intent.getBooleanExtra("EXTRA_REPEAT_SOUND", false)
 
         Log.d("AlarmReceiver", "Alarm Fired! Tag=$nextTag")
 
@@ -24,7 +25,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val showOverlay = AlertOverlayController.canShow(context)
         NotificationHelper.showAlarmNotification(context, title, body, soundUri, silent = showOverlay)
         if (showOverlay) {
-            AlertOverlayController.show(context, nextTag, null, soundUri)
+            AlertOverlayController.show(context, nextTag, null, soundUri, repeatSound)
         }
         
         // 2. Headless Reschedule (Strict Rule A1)
@@ -86,7 +87,7 @@ class AlarmReceiver : BroadcastReceiver() {
                         // Prevent scheduling past
                         if (nextAt > System.currentTimeMillis()) {
                              Log.d("AlarmReceiver", "Rescheduling Next: $nTag at $nextAt")
-                             alarmScheduler.scheduleExact(nextAt, nTag, currentSound)
+                             alarmScheduler.scheduleExact(nextAt, nTag, currentSound, scheduleSettings.repeatAlarmSound)
                              prefs.saveAlarmState(nextAt, nTag)
                              // Keep the user informed with ongoing countdown
                              NotificationHelper.showOngoingNotification(context, nextAt, nTag)

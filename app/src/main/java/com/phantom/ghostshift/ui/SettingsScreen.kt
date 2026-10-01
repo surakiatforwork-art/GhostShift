@@ -57,12 +57,24 @@ fun SettingsScreen(
     var outInMin by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.outInMinMinutes.toString()) }
     var outInMax by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.outInMaxMinutes?.toString().orEmpty()) }
 
-    fun saveTiming(autoStart: Boolean = state.scheduleSettings.autoStartOnFirstDownload) {
+    fun saveTiming(
+        autoStart: Boolean = state.scheduleSettings.autoStartOnFirstDownload,
+        repeatAlarmSound: Boolean = state.scheduleSettings.repeatAlarmSound
+    ) {
         val inMin = inOutMin.toIntOrNull()?.coerceAtLeast(0) ?: 0
         val outMin = outInMin.toIntOrNull()?.coerceAtLeast(0) ?: 0
         val inMax = inOutMax.toIntOrNull()?.coerceAtLeast(inMin)
         val outMax = outInMax.toIntOrNull()?.coerceAtLeast(outMin)
-        onScheduleSettingsChanged(ScheduleSettings(inMin, inMax, outMin, outMax, autoStart))
+        onScheduleSettingsChanged(
+            ScheduleSettings(
+                inOutMinMinutes = inMin,
+                inOutMaxMinutes = inMax,
+                outInMinMinutes = outMin,
+                outInMaxMinutes = outMax,
+                autoStartOnFirstDownload = autoStart,
+                repeatAlarmSound = repeatAlarmSound
+            )
+        )
     }
     val targetSummary = if (currentTargetAt != null) {
         formatTargetDateTime(currentTargetAt)
@@ -200,6 +212,17 @@ fun SettingsScreen(
                         Switch(
                             checked = state.scheduleSettings.autoStartOnFirstDownload,
                             onCheckedChange = { enabled -> saveTiming(enabled) }
+                        )
+                    }
+                    Divider(color = MintLine)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("เล่นเสียงเตือนซ้ำ", color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            Text("ปิดไว้เพื่อเล่นเสียงเพียงครั้งเดียว", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                        }
+                        Switch(
+                            checked = state.scheduleSettings.repeatAlarmSound,
+                            onCheckedChange = { enabled -> saveTiming(repeatAlarmSound = enabled) }
                         )
                     }
                 }

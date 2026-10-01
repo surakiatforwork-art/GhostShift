@@ -28,10 +28,11 @@ class RescheduleReceiver : BroadcastReceiver() {
                 val scheduler = AlarmScheduler(context)
                 
                 val (dueAt, nextTag, soundUri) = prefs.alarmState.first()
+                val repeatSound = prefs.scheduleSettings.first().repeatAlarmSound
                 // Use stored soundUri or null if not set
                 
                 if (dueAt != null && nextTag != null && dueAt > System.currentTimeMillis()) {
-                     scheduler.scheduleExact(dueAt, nextTag, soundUri) 
+                     scheduler.scheduleExact(dueAt, nextTag, soundUri, repeatSound) 
                      Log.d("RescheduleReceiver", "Rescheduled $nextTag at $dueAt")
                 }
             } catch (e: Exception) {

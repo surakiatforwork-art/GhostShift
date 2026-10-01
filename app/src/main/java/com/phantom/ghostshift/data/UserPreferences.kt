@@ -36,6 +36,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val OUT_IN_MIN = intPreferencesKey("out_in_min_minutes")
         val OUT_IN_MAX = intPreferencesKey("out_in_max_minutes")
         val AUTO_START_FIRST_DOWNLOAD = booleanPreferencesKey("auto_start_first_download")
+        val REPEAT_ALARM_SOUND = booleanPreferencesKey("repeat_alarm_sound")
     }
 
     val timerState: Flow<TimerState> = dataStore.data.map { prefs ->
@@ -63,7 +64,9 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
             inOutMaxMinutes = prefs[Keys.IN_OUT_MAX]?.takeIf { it > 0 } ?: if (prefs.contains(Keys.IN_OUT_MAX)) null else 25,
             outInMinMinutes = prefs[Keys.OUT_IN_MIN] ?: 4,
             outInMaxMinutes = prefs[Keys.OUT_IN_MAX]?.takeIf { it > 0 } ?: if (prefs.contains(Keys.OUT_IN_MAX)) null else 30,
-            autoStartOnFirstDownload = prefs[Keys.AUTO_START_FIRST_DOWNLOAD] ?: false
+            autoStartOnFirstDownload = prefs[Keys.AUTO_START_FIRST_DOWNLOAD] ?: false,
+            // Existing installations default to one play, preventing an unexpected endless alarm.
+            repeatAlarmSound = prefs[Keys.REPEAT_ALARM_SOUND] ?: false
         ).normalized()
     }
 
@@ -101,6 +104,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
             prefs[Keys.OUT_IN_MIN] = normalized.outInMinMinutes
             prefs[Keys.OUT_IN_MAX] = normalized.outInMaxMinutes ?: 0
             prefs[Keys.AUTO_START_FIRST_DOWNLOAD] = normalized.autoStartOnFirstDownload
+            prefs[Keys.REPEAT_ALARM_SOUND] = normalized.repeatAlarmSound
         }
     }
 }

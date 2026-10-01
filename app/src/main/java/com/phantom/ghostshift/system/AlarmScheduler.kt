@@ -18,7 +18,7 @@ class AlarmScheduler(private val context: Context) {
         }
     }
 
-    fun scheduleExact(dueAtMs: Long, nextTag: String, soundUri: String?) {
+    fun scheduleExact(dueAtMs: Long, nextTag: String, soundUri: String?, repeatSound: Boolean) {
         if (!canScheduleExactAlarms()) {
             Log.w("AlarmScheduler", "Exact alarm permission missing. Fallback not implemented fully yet (using WorkManager could be an option).")
             // In strict mode, we might just try setExact anyway and catch SecurityException 
@@ -28,6 +28,7 @@ class AlarmScheduler(private val context: Context) {
         val intent = Intent(context, AlarmReceiver::class.java).apply {
             putExtra("EXTRA_NEXT_TAG", nextTag)
             putExtra("EXTRA_SOUND_URI", soundUri)
+            putExtra("EXTRA_REPEAT_SOUND", repeatSound)
         }
         
         val pendingIntent = PendingIntent.getBroadcast(

@@ -37,7 +37,8 @@ data class ScheduleSettings(
     val inOutMaxMinutes: Int? = 25,
     val outInMinMinutes: Int = 4,
     val outInMaxMinutes: Int? = 30,
-    val autoStartOnFirstDownload: Boolean = false
+    val autoStartOnFirstDownload: Boolean = false,
+    val repeatAlarmSound: Boolean = false
 )
 
 data class ScheduleResult(

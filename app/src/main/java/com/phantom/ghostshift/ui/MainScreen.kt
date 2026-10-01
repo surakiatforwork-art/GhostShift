@@ -773,13 +773,19 @@ fun StickyBottomBar(
                 } else {
                     defaultTarget
                 }
-                val btnLabel = if (!state.timer.running) "Start (Finish ${fmtTime(displayTarget)})" else "Running..."
+                val finalPhotoAt = state.schedule.items.lastOrNull()?.planAt
+                val btnLabel = when {
+                    !state.timer.running -> "Start (Finish ${fmtTime(displayTarget)})"
+                    finalPhotoAt != null -> "Last photo in ${fmtDuration((finalPhotoAt - state.currentTime).coerceAtLeast(0L))}"
+                    else -> "Running..."
+                }
 
                 ClayActionButton(
                     text = btnLabel,
                     onClick = onStart,
                     enabled = state.canStartTimer,
                     icon = Icons.Default.PlayArrow,
+                    emphasized = false,
                     modifier = Modifier.weight(1.5f).height(48.dp)
                 )
                 ClayIconButton(

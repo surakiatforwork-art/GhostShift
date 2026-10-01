@@ -86,22 +86,29 @@ fun ClayActionButton(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     enabled: Boolean = true,
-    danger: Boolean = false
+    danger: Boolean = false,
+    emphasized: Boolean = true
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed && enabled) 0.96f else 1f, tween(110), label = "clayActionPress")
-    val foreground = if (danger) MintDanger else Color.White
+    val foreground = when {
+        danger -> MintDanger
+        emphasized -> Color.White
+        else -> MintText
+    }
     val clayGradient = if (danger) {
         Brush.verticalGradient(listOf(Color(0xFFFFFCFC), MintErrBg, Color(0xFFFFDFDF)))
-    } else {
+    } else if (emphasized) {
         Brush.verticalGradient(listOf(Color(0xFF42D4B4), MintAccent, Color(0xFF159C80)))
+    } else {
+        Brush.verticalGradient(listOf(MintClayHighlight, MintCardBg, MintSoft))
     }
     Surface(
         color = Color.Transparent,
         contentColor = foreground,
         shape = RoundedCornerShape(24.dp),
-        shadowElevation = if (enabled) 8.dp else 0.dp,
+        shadowElevation = if (enabled && emphasized) 8.dp else if (enabled) 4.dp else 0.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, if (danger) Color(0xFFFFD1D1) else MintClayHighlight),
         modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
     ) {

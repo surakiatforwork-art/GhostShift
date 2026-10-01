@@ -72,7 +72,8 @@ data class SharedPhotoInput(
 private data class AlarmKey(
     val dueAt: Long,
     val tag: String,
-    val soundUri: String?
+    val soundUri: String?,
+    val repeatSound: Boolean
 )
 
 class MainViewModel(
@@ -194,7 +195,8 @@ class MainViewModel(
                         AlarmKey(
                             dueAt = state.schedule.nextAt ?: -1L,
                             tag = state.schedule.nextTag ?: "",
-                            soundUri = state.soundUri
+                            soundUri = state.soundUri,
+                            repeatSound = state.scheduleSettings.repeatAlarmSound
                         ),
                         // persisted alarm snapshot
                         Pair(state.alarmDueAt, state.alarmTag)
@@ -232,12 +234,13 @@ class MainViewModel(
         val desired = AlarmKey(
             dueAt = schedule.nextAt!!,
             tag = schedule.nextTag!!,
-            soundUri = state.soundUri
+            soundUri = state.soundUri,
+            repeatSound = state.scheduleSettings.repeatAlarmSound
         )
 
         // If due/tag/sound changed => reschedule
         if (lastAlarmKey != desired) {
-            alarmScheduler.scheduleExact(desired.dueAt, desired.tag, desired.soundUri)
+            alarmScheduler.scheduleExact(desired.dueAt, desired.tag, desired.soundUri, desired.repeatSound)
             prefs.saveAlarmState(desired.dueAt, desired.tag)
             
             // Trigger ongoing notification (needs Context).
