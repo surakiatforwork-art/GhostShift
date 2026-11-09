@@ -48,6 +48,16 @@ class PhotoRepository(
 
     suspend fun getById(id: Long): PhotoEntity? = dao.getById(id)
 
+    suspend fun reservePair(remark: String) {
+        val index = (dao.getAllSortedByIdxOnce().maxOfOrNull { it.idx } ?: 0) + 1
+        dao.upsertPair(Kind.entries.map { kind ->
+            PhotoEntity(tag = "${kind.name}-$index", kind = kind, idx = index,
+                createdAt = System.currentTimeMillis(), downloaded = false, downloadedAt = null,
+                editedAt = null, filePath = "", width = 0, height = 0,
+                remark = remark.trim().take(120).ifBlank { null })
+        })
+    }
+
     suspend fun savePairRemark(index: Int, remark: String) {
         val normalized = remark.trim().take(120).ifBlank { null }
         withContext(Dispatchers.IO) {

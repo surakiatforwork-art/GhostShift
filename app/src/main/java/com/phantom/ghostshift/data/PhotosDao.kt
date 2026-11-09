@@ -23,6 +23,9 @@ interface PhotosDao {
     @Upsert
     suspend fun upsert(photo: PhotoEntity): Long
 
+    @Upsert
+    suspend fun upsertPair(photos: List<PhotoEntity>)
+
     @Delete
     suspend fun delete(photo: PhotoEntity)
 

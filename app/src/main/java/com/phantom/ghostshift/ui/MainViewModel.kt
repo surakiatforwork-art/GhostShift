@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class MainUiState(
     val pendingPhotos: List<PhotoEntity> = emptyList(),
@@ -84,6 +86,7 @@ class MainViewModel(
 
     private val _now = MutableStateFlow(System.currentTimeMillis())
     private val isExportingNext = MutableStateFlow(false)
+    private val importMutex = Mutex()
     private val _exportHeadsUpEvents = MutableSharedFlow<ExportHeadsUpEvent>(extraBufferCapacity = 1)
     val exportHeadsUpEvents = _exportHeadsUpEvents.asSharedFlow()
 
@@ -313,13 +316,18 @@ class MainViewModel(
         if (uris.isEmpty()) return
 
         viewModelScope.launch {
-            for (uri in uris) {
-                val current = repo.allPhotosNowSorted()
-                val mapped = current.map { it.toSchedulePhoto() }
-                val nextTag = SlotManager.computeNextSlot(mapped)
-                repo.addPhotoFromUri(uri, nextTag, mirrorHorizontally)
+            importMutex.withLock {
+                for (uri in uris) addToNextSlot(uri, mirrorHorizontally)
             }
         }
+    }
+
+    private suspend fun addToNextSlot(uri: Uri, mirror: Boolean = false, remark: String? = null) {
+        val current = repo.allPhotosNowSorted()
+        val tag = SlotManager.computeNextSlot(current.filter { it.filePath.isNotBlank() }.map { it.toSchedulePhoto() })
+        val reserved = current.firstOrNull { it.tag == tag && it.filePath.isBlank() }
+        if (reserved != null) repo.replacePhotoFromUri(reserved.id, uri, mirror)
+        else repo.addPhotoFromUri(uri, tag, mirror, remark)
     }
 
     fun replacePhoto(id: Long, uri: Uri, mirrorHorizontally: Boolean = false) {
@@ -359,10 +367,8 @@ class MainViewModel(
         if (inputs.isEmpty()) return
 
         viewModelScope.launch {
-            for (input in inputs) {
-                val current = repo.allPhotosNowSorted()
-                val nextTag = SlotManager.computeNextSlot(current.map { it.toSchedulePhoto() })
-                repo.addPhotoFromUri(input.uri, nextTag, remark = input.remark)
+            importMutex.withLock {
+                for (input in inputs) addToNextSlot(input.uri, remark = input.remark)
             }
         }
     }
@@ -381,21 +387,23 @@ class MainViewModel(
         }
     }
 
-    fun exportNextPhoto() {
+    fun reservePair(remark: String) {
+        viewModelScope.launch { importMutex.withLock { repo.reservePair(remark) } }
+    }
+
+    fun exportNextPhoto(expectedId: Long, confirmedIn: Boolean = false) {
         if (!isExportingNext.compareAndSet(expect = false, update = true)) return
-        val next = coreState.value.pendingPhotos.firstOrNull()
-        if (next == null) {
-            isExportingNext.value = false
-            return
-        }
         viewModelScope.launch {
             try {
+                val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
+                if (next == null || next.id != expectedId || next.filePath.isBlank() ||
+                    (next.kind.name == "IN" && !confirmedIn)) return@launch
                 val currentTimer = prefs.timerState.first()
                 val settings = prefs.scheduleSettings.first()
-                if (next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
+                val exported = repo.exportPhoto(next)
+                if (exported && next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
                     startTimerNow()
                 }
-                val exported = repo.exportPhoto(next)
                 // Keep the action locked briefly so a double-tap cannot export the following photo.
                 delay(700)
                 if (exported) {

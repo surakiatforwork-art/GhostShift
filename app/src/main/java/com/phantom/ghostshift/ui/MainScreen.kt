@@ -66,13 +66,40 @@ private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outP
     val stableId: Long get() = inPhoto?.id ?: outPhoto?.id ?: index.toLong()
     val remark: String? get() = inPhoto?.remark?.takeIf { it.isNotBlank() } ?: outPhoto?.remark?.takeIf { it.isNotBlank() }
     val fullyDownloaded: Boolean get() = inPhoto?.downloadedAt != null && outPhoto?.downloadedAt != null
-    val isReorderable: Boolean get() = inPhoto != null && outPhoto != null &&
-        inPhoto.downloadedAt == null && outPhoto.downloadedAt == null
+    val isReorderable: Boolean get() = !inPhoto?.filePath.isNullOrBlank() && !outPhoto?.filePath.isNullOrBlank() &&
+        inPhoto?.downloadedAt == null && outPhoto?.downloadedAt == null
 }
 
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
+    var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
+    var reservePair by remember { mutableStateOf(false) }
+    var pairRemark by remember { mutableStateOf("") }
+    confirmIn?.let { photo ->
+        AlertDialog(
+            onDismissRequest = { confirmIn = null },
+            title = { Text("ดาวน์โหลด ${photo.tag}?") },
+            text = { Text(photo.remark ?: "ยืนยันเมื่อพร้อมใช้ภาพ IN นี้") },
+            confirmButton = { TextButton(onClick = {
+                confirmIn = null
+                viewModel.exportNextPhoto(photo.id, confirmedIn = true)
+            }) { Text("ดาวน์โหลด") } },
+            dismissButton = { TextButton(onClick = { confirmIn = null }) { Text("ยกเลิก") } }
+        )
+    }
+    if (reservePair) {
+        AlertDialog(
+            onDismissRequest = { reservePair = false },
+            title = { Text("เพิ่มคู่ภาพเปล่า") },
+            text = { OutlinedTextField(pairRemark, { pairRemark = it.take(120) }, label = { Text("ชื่อสาขา / Remark (ไม่บังคับ)") }) },
+            confirmButton = { TextButton(onClick = {
+                viewModel.reservePair(pairRemark)
+                reservePair = false
+            }) { Text("เพิ่มคู่") } },
+            dismissButton = { TextButton(onClick = { reservePair = false }) { Text("ยกเลิก") } }
+        )
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -312,11 +339,18 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             StatusHeader(
                 state = state,
                 onDeleteAll = { confirmDeleteAll = true },
-                onDownloadNext = { viewModel.exportNextPhoto() },
+                onDownloadNext = {
+                    state.pendingPhotos.firstOrNull()?.takeIf { it.filePath.isNotBlank() && !state.isExportingNext }?.let { photo ->
+                        if (photo.kind.name == "IN") confirmIn = photo
+                        else viewModel.exportNextPhoto(photo.id)
+                    }
+                },
                 onSettings = { showSettings = true }
             )
         },
         bottomBar = {
+            Column {
+            TextButton(onClick = { pairRemark = ""; reservePair = true }) { Text("+ เพิ่มคู่ภาพเปล่า") }
             StickyBottomBar(
                 state = state,
                 onStart = {
@@ -335,6 +369,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     multiPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }
             )
+            }
         }
     ) { padding ->
         LazyColumn(
@@ -670,7 +705,7 @@ fun StatusHeader(
                 ClayActionButton(
                     text = if (state.isExportingNext) "กำลังบันทึก" else "Next",
                     onClick = onDownloadNext,
-                    enabled = state.pendingPhotos.isNotEmpty() && !state.isExportingNext,
+                    enabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext,
                     icon = Icons.Default.DownloadForOffline,
                     modifier = Modifier.weight(1f).height(64.dp)
                 )
@@ -963,9 +998,9 @@ private fun PairPhoto(
                     }
                 )
                 .then(if (downloaded) Modifier.alpha(0.42f) else Modifier)
-                .clickable(enabled = photo != null) { photo?.let(onPreview) }
+                .clickable(enabled = !photo?.filePath.isNullOrBlank()) { photo?.let(onPreview) }
         ) {
-            if (photo != null) {
+            if (photo != null && photo.filePath.isNotBlank()) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current).data("file://${photo.filePath}").crossfade(true).build(),
                     contentDescription = label,
@@ -995,7 +1030,7 @@ private fun PairPhoto(
             }
         }
         when {
-            photo == null -> Text("$label • ไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
+            photo == null || photo.filePath.isBlank() -> Text("$label • ยังไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
             due -> Text("$label • ถึงเวลาแล้ว", style = MaterialTheme.typography.labelSmall, color = MintDanger, maxLines = 1)
             dueAt != null && !downloaded -> Text("$label • ${fmtTime(dueAt)}", style = MaterialTheme.typography.labelSmall, color = MintAccent, maxLines = 1)
             downloaded -> Text("$label • Exported", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
