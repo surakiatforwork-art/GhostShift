@@ -7,6 +7,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import com.phantom.ghostshift.R
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.animation.core.Animatable
@@ -28,6 +32,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -87,7 +101,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         GhostDialog(
             onDismissRequest = { confirmIn = null },
             title = { Text("ดาวน์โหลด ${photo.tag}?") },
-            text = { Text(photo.remark ?: "ยืนยันเมื่อพร้อมใช้ภาพ IN นี้") },
+            text = { Text(photo.remark ?: "พร้อมดาวน์โหลดภาพนี้แล้วหรือยัง?") },
             confirmButton = { GhostDialogButton(onClick = {
                 confirmIn = null
                 viewModel.exportNextPhoto(photo.id, confirmedIn = true)
@@ -98,8 +112,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (reservePair) {
         GhostDialog(
             onDismissRequest = { reservePair = false },
-            title = { Text("เพิ่มคู่ภาพเปล่า") },
-            text = { OutlinedTextField(pairRemark, { pairRemark = it.take(120) }, label = { Text("ชื่อสาขา / Remark (ไม่บังคับ)") }) },
+            title = { Text("เพิ่มคู่ภาพ") },
+            text = { OutlinedTextField(pairRemark, { pairRemark = it.take(120) }, label = { Text("ชื่อสาขาหรือหมายเหตุ (ไม่บังคับ)") }) },
             confirmButton = { GhostDialogButton(tone = UtilityTone.Aqua, onClick = {
                 viewModel.reservePair(pairRemark)
                 reservePair = false
@@ -128,7 +142,21 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     var reorderMode by remember { mutableStateOf(false) }
     var reorderPairs by remember { mutableStateOf<List<PhotoPair>>(emptyList()) }
     var draggedPairId by remember { mutableStateOf<Long?>(null) }
+    var holdNeutralColors by remember { mutableStateOf(false) }
+    LaunchedEffect(reorderMode) {
+        if (reorderMode) {
+            holdNeutralColors = true
+        } else if (holdNeutralColors) {
+            delay(300)
+            holdNeutralColors = false
+        }
+    }
+
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
+    var dragHeight by remember { mutableIntStateOf(0) }
+    var fingerY by remember { mutableFloatStateOf(0f) }
+    var grabY by remember { mutableFloatStateOf(0f) }
+    val dragDensity = LocalDensity.current
 
     val listState = rememberLazyListState()
     val haptic = LocalHapticFeedback.current
@@ -161,43 +189,43 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         if (reorderMode && pendingPairs.map { it.stableId }.toSet() != reorderPairs.map { it.stableId }.toSet()) resetDrag()
     }
     LaunchedEffect(committingOrder) {
-        if (committingOrder) { delay(2000); resetDrag() }
+        if (committingOrder) { delay(10000); resetDrag() }
     }
+    var awaitingSlot by remember { mutableStateOf<Int?>(null) }
     fun moveDragged() {
         val id = draggedPairId ?: return
         val info = listState.layoutInfo.visibleItemsInfo
-        val dragged = info.firstOrNull { it.key == "pending-$id" } ?: return
-        draggedOffsetY = dragCenter - dragged.offset - dragged.size / 2f
         val from = reorderPairs.indexOfFirst { it.stableId == id }
-        val target = info.firstOrNull { item ->
-            val targetId = (item.key as? String)?.removePrefix("pending-")?.toLongOrNull()
-            val to = reorderPairs.indexOfFirst { it.stableId == targetId && it.isReorderable }
-            item.key != dragged.key && to >= 0 && from >= 0 &&
-                if (to > from) dragCenter >= item.offset + item.size / 2f && dragCenter <= item.offset + item.size
-                else dragCenter <= item.offset + item.size / 2f && dragCenter >= item.offset
-        } ?: return
-        val to = reorderPairs.indexOfFirst { "pending-${it.stableId}" == target.key }
-        if (from != to && from >= 0 && to >= 0) {
-            // Preserve the slots of incomplete/exported pairs.
-            val eligible = reorderPairs.filter { it.isReorderable }.toMutableList()
-            val f = eligible.indexOfFirst { it.stableId == id }
-            val t = eligible.indexOfFirst { "pending-${it.stableId}" == target.key }
-            if (f < 0 || t < 0) return
-            eligible.add(t, eligible.removeAt(f))
-            val iterator = eligible.iterator()
-            reorderPairs = reorderPairs.map { if (it.isReorderable) iterator.next() else it }
-            draggedOffsetY = dragCenter - target.offset - dragged.size / 2f
+        if (from < 0) return
+        awaitingSlot?.let { slot ->
+            val current = info.firstOrNull { it.key == "pending-$id" }
+            if (current != null && current.index != slot) return
+            awaitingSlot = null
         }
+        val center = fingerY - grabY + dragHeight / 2f
+        val candidates = info.filter { item ->
+            val to = reorderPairs.indexOfFirst { "pending-${it.stableId}" == item.key && it.isReorderable }
+            to >= 0 && to != from && if (to > from) center > item.offset + item.size / 2f else center < item.offset + item.size / 2f
+        }
+        val target = candidates.minByOrNull { kotlin.math.abs(center - (it.offset + it.size / 2f)) } ?: return
+        val eligible = reorderPairs.filter { it.isReorderable }.toMutableList()
+        val f = eligible.indexOfFirst { it.stableId == id }
+        val t = eligible.indexOfFirst { "pending-${it.stableId}" == target.key }
+        if (f < 0 || t < 0 || f == t) return
+        eligible.add(t, eligible.removeAt(f))
+        val iterator = eligible.iterator()
+        reorderPairs = reorderPairs.map { if (it.isReorderable) iterator.next() else it }
+        awaitingSlot = target.index
     }
     LaunchedEffect(draggedPairId) {
         while (draggedPairId != null) {
             withFrameNanos { }
             val layout = listState.layoutInfo
             val speed = when {
-                dragCenter < layout.viewportStartOffset + edgePx ->
-                    -((layout.viewportStartOffset + edgePx - dragCenter) / edgePx).coerceIn(0f, 1f) * edgePx / 6f
-                dragCenter > layout.viewportEndOffset - edgePx ->
-                    ((dragCenter - layout.viewportEndOffset + edgePx) / edgePx).coerceIn(0f, 1f) * edgePx / 6f
+                fingerY < layout.viewportStartOffset + edgePx ->
+                    -((layout.viewportStartOffset + edgePx - fingerY) / edgePx).coerceIn(0f, 1f) * edgePx / 6f
+                fingerY > layout.viewportEndOffset - edgePx ->
+                    ((fingerY - layout.viewportEndOffset + edgePx) / edgePx).coerceIn(0f, 1f) * edgePx / 6f
                 else -> 0f
             }
             if (speed != 0f) listState.scrollBy(speed)
@@ -288,8 +316,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     }
 
     var showSettings by remember { mutableStateOf(false) }
+    var showActivity by remember { mutableStateOf(false) }
+    if (showActivity) {
+        BackHandler { showActivity = false }
+        GhostActivityScreen(state, onBack = { showActivity = false })
+        return
+    }
 
     if (showSettings) {
+        BackHandler { showSettings = false }
         SettingsScreen(
             state = state,
             onSoundSelected = { uri -> viewModel.setSound(uri) },
@@ -303,6 +338,30 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             onBack = { showSettings = false }
         )
         return
+    }
+
+    // Warn once per conflict episode, not on every clock tick or export.
+    var overflowAcknowledged by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val overflow = state.schedule.overflowMs
+    LaunchedEffect(overflow > 0L) {
+        if (overflow <= 0L) overflowAcknowledged = false
+    }
+    if (overflow > 0L && !overflowAcknowledged && progress == null && confirmIn == null && !reservePair) {
+        val finish = state.schedule.items.lastOrNull()?.planAt
+        GhostDialog(
+            onDismissRequest = { overflowAcknowledged = true },
+            title = { Text("เวลาไม่พอสำหรับภาพที่เหลือ") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("ภาพที่เหลือ: ${state.pendingPhotos.size} ภาพ")
+                    Text("เวลาเลิกงาน: ${state.timer.targetAt?.let { fmtTime(it) } ?: "-"}")
+                    Text("คาดว่าจะเสร็จ: ${finish?.let { fmtTime(it) } ?: "-"}")
+                    Text("เกินเวลา ${(overflow + 59999L) / 60000L} นาที", color = MintWarn)
+                    Text("ระบบจะใช้ช่วงเวลาเดิมที่ตั้งไว้ และแจ้งเตือนต่อไปจนกว่าจะครบทุกภาพ")
+                }
+            },
+            confirmButton = { GhostDialogButton(onClick = { overflowAcknowledged = true }) { Text("รับทราบ") } }
+        )
     }
 
     // Preview Dialog
@@ -343,7 +402,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (showEditDialog) {
         GhostDialog(
             onDismissRequest = { showEditDialog = false },
-            title = { Text("เลือกแหล่งภาพ") },
+            title = { Text("เพิ่มภาพจาก") },
             text = { Text("ถ่ายภาพใหม่หรือเลือกจากแกลเลอรี่") },
             confirmButton = {
                 GhostDialogButton(tone = UtilityTone.Sky, onClick = {
@@ -362,7 +421,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     editChoicePair?.let { pair ->
         PhotoChoiceDialog(
-            title = "เลือกภาพที่ต้องการแก้ไข",
+            title = "แก้ไขภาพ",
             pair = pair,
             allowDownloaded = false,
             onRemarkSaved = { remark -> viewModel.savePairRemark(pair.index, remark) },
@@ -377,7 +436,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     deleteChoicePair?.let { pair ->
         PhotoChoiceDialog(
-            title = "เลือกภาพที่ต้องการลบ",
+            title = "ลบภาพ",
             pair = pair,
             allowDownloaded = false,
             onDismiss = { deleteChoicePair = null },
@@ -406,12 +465,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                         else viewModel.exportNextPhoto(photo.id)
                     }
                 },
-                onSettings = { showSettings = true }
+                onSettings = { showSettings = true },
+                onActivity = { showActivity = true }
             )
         },
         floatingActionButton = {
             ClayIconButton(onClick = { pairRemark = ""; reservePair = true }, icon = Icons.Default.Add,
-                contentDescription = "เพิ่มคู่ภาพเปล่า", modifier = Modifier.size(52.dp), tone = UtilityTone.Aqua)
+                contentDescription = "เพิ่มคู่ภาพ", modifier = Modifier.size(52.dp), tone = UtilityTone.Aqua)
         },
         bottomBar = {
             Column {
@@ -436,94 +496,121 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             }
         }
     ) { padding ->
+        Box(Modifier.padding(padding).fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp)
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { position ->
+                        if (!committingOrder && draggedPairId == null) {
+                            val info = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                position.y >= it.offset && position.y < it.offset + it.size &&
+                                    latestPending.any { pair -> "pending-${pair.stableId}" == it.key && pair.isReorderable }
+                            }
+                            val pair = latestPending.firstOrNull { "pending-${it.stableId}" == info?.key }
+                            if (info != null && pair != null) {
+                                awaitingSlot = null
+                                reorderPairs = latestPending
+                                originalOrder = reorderPairs.filter { it.isReorderable }.map { it.stableId }
+                                fingerY = position.y
+                                grabY = position.y - info.offset
+                                dragHeight = info.size
+                                draggedPairId = pair.stableId
+                                reorderMode = true
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                        }
+                    },
+                    onDrag = { change, _ ->
+                        if (draggedPairId != null) {
+                            change.consume()
+                            fingerY = change.position.y
+                            moveDragged()
+                        }
+                    },
+                    onDragEnd = {
+                        if (draggedPairId != null) {
+                            val order = reorderPairs.filter { it.isReorderable }.map { it.stableId }
+                            draggedPairId = null
+                            if (order != originalOrder) {
+                                committingOrder = true
+                                viewModel.reorderCompletePendingPairs(order)
+                            } else resetDrag()
+                        }
+                    },
+                    onDragCancel = { if (draggedPairId != null) resetDrag() }
+                )
+            }) {
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            userScrollEnabled = draggedPairId == null,
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
             contentPadding = PaddingValues(bottom = 76.dp)
         ) {
             item {
                 SectionHeaderCard(
-                    title = "Pending",
+                    title = "รอดาวน์โหลด",
                     count = pendingPairs.size,
-                    hint = "กดค้างแล้วลากเพื่อจัดเรียง"
+                    hint = "กดค้างเพื่อจัดลำดับ"
                 )
+            }
+
+            if (pendingPairs.isEmpty()) item {
+                GroupBody { QuietGhostState(completed = downloadedPairs.isNotEmpty(),
+                    onAdd = { pairRemark = ""; reservePair = true }) }
             }
 
             items(visiblePendingPairs, key = { "pending-${it.stableId}" }) { pair ->
                 val isDragged = draggedPairId == pair.stableId
-                val reorderModifier = Modifier
-                    .zIndex(if (isDragged) 2f else 0f)
-                    .then(if (!isDragged) Modifier.animateItemPlacement(tween(170)) else Modifier)
-                    .graphicsLayer {
-                        translationY = if (draggedPairId == pair.stableId) draggedOffsetY else 0f
-                        scaleX = if (draggedPairId == pair.stableId) 1.015f else 1f
-                        scaleY = scaleX
-                        shadowElevation = if (draggedPairId == pair.stableId) 8.dp.toPx() else 0f
+                val reorderModifier = if (!isDragged) Modifier.animateItemPlacement(tween(150)) else Modifier
+                if (isDragged) {
+                    GroupBody {
+                        val recess = MintText.copy(alpha = .18f)
+                        val base = MintBg
+                        Spacer(Modifier.fillMaxWidth()
+                            .height(with(dragDensity) { (dragHeight - 6.dp.roundToPx()).coerceAtLeast(0).toDp() })
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(base)
+                            .drawWithCache {
+                                val depth = 10.dp.toPx().coerceAtMost(size.height / 2f)
+                                val top = Brush.verticalGradient(listOf(recess, Color.Transparent), endY = depth)
+                                val left = Brush.horizontalGradient(listOf(recess.copy(alpha = .12f), Color.Transparent), endX = depth)
+                                val right = Brush.horizontalGradient(listOf(Color.Transparent, recess.copy(alpha = .12f)), startX = size.width - depth, endX = size.width)
+                                val bottom = Brush.verticalGradient(listOf(Color.Transparent, recess.copy(alpha = .06f)), startY = size.height - depth, endY = size.height)
+                                onDrawBehind {
+                                    drawRect(top)
+                                    drawRect(left)
+                                    drawRect(right)
+                                    drawRect(bottom)
+                                }
+                            })
                     }
-                    .then(if (pair.isReorderable) Modifier.pointerInput(pair.stableId) {
-                        detectDragGesturesAfterLongPress(
-                            onDragStart = {
-                                if (!committingOrder && draggedPairId == null) {
-                                    val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "pending-${pair.stableId}" }
-                                    if (info != null) {
-                                        reorderPairs = latestPending
-                                        originalOrder = reorderPairs.filter { it.isReorderable }.map { it.stableId }
-                                        dragCenter = info.offset + info.size / 2f
-                                        draggedOffsetY = 0f
-                                        draggedPairId = pair.stableId
-                                        reorderMode = true
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    }
-                                }
-                            },
-                            onDrag = { change, delta ->
-                                if (draggedPairId == pair.stableId) {
-                                    change.consume()
-                                    dragCenter += delta.y
-                                    moveDragged()
-                                }
-                            },
-                            onDragEnd = {
-                                if (draggedPairId == pair.stableId) {
-                                    val order = reorderPairs.filter { it.isReorderable }.map { it.stableId }
-                                    draggedPairId = null
-                                    draggedOffsetY = 0f
-                                    if (order != originalOrder) {
-                                        committingOrder = true
-                                        viewModel.reorderCompletePendingPairs(order)
-                                    } else resetDrag()
-                                }
-                            },
-                            onDragCancel = { if (draggedPairId == pair.stableId) resetDrag() }
-                        )
-                    } else Modifier)
-                PhotoPairCard(
-                    modifier = Modifier.fillMaxWidth().then(reorderModifier),
+                } else GroupBody(modifier = reorderModifier) { PhotoPairCard(
+                    modifier = Modifier.fillMaxWidth(),
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,
-                    currentTime = if (state.scheduleSettings.timerEnabled && !pair.fullyDownloaded) state.currentTime else 0L,
+                    currentTime = if (state.scheduleSettings.timerEnabled) state.currentTime else 0L,
+                    nextPhotoId = state.pendingPhotos.firstOrNull()?.id,
                     onEdit = if (reorderMode) null else { { editChoicePair = pair } },
                     onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
                     onSwap = if (reorderMode) null else { { viewModel.swapPair(pair.index) } },
                     reorderMode = false,
+                    neutralColor = reorderMode || holdNeutralColors,
+                    cardElevation = if (isDragged) 16.dp else if (draggedPairId != null) 6.dp else 2.dp,
                     onPreview = { previewPhoto = it }
-                )
+                ) }
             }
+            item { GroupEnd(); Spacer(Modifier.height(10.dp)) }
 
             item {
                 SectionHeaderCard(
-                    title = "Downloaded (Exported)",
+                    title = "ดาวน์โหลดแล้ว",
                     count = downloadedPairs.size,
-                    hint = if (downloadedPairs.isEmpty()) "ยังไม่มีคู่ที่ Export ครบ" else "คู่ที่ Export ครบทั้ง IN และ OUT"
+                    hint = if (downloadedPairs.isEmpty()) "ยังไม่มีประวัติครบคู่" else "ดาวน์โหลดครบทั้ง IN และ OUT"
                 )
             }
 
             items(downloadedPairs, key = { "downloaded-${it.index}" }) { pair ->
-                PhotoPairCard(
+                GroupBody { PhotoPairCard(
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,
                     currentTime = if (state.scheduleSettings.timerEnabled && !pair.fullyDownloaded) state.currentTime else 0L,
@@ -532,12 +619,26 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     onSwap = null,
                     reorderMode = false,
                     onPreview = { previewPhoto = it }
-                )
+                ) }
             }
 
             item {
+                GroupEnd()
                 Spacer(Modifier.height(8.dp))
             }
+        }
+        draggedPairId?.let { id ->
+            reorderPairs.firstOrNull { it.stableId == id }?.let { pair ->
+                Box(Modifier.fillMaxWidth().offset { IntOffset(0, (fingerY - grabY).roundToInt()) }
+                    .zIndex(10f).padding(horizontal = 8.dp)) {
+                    PhotoPairCard(pair = pair, planAtByTag = state.schedule.planAtByTag,
+                        currentTime = if (state.scheduleSettings.timerEnabled) state.currentTime else 0L,
+                        onEdit = null, onDelete = null, onSwap = null, reorderMode = false,
+                        onPreview = {}, nextPhotoId = state.pendingPhotos.firstOrNull()?.id,
+                        cardElevation = 16.dp, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
         }
     }
     }
@@ -545,8 +646,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (confirmDeleteAll) {
         GhostDialog(
             onDismissRequest = { confirmDeleteAll = false },
-            title = { Text("ล้างข้อมูลทั้งหมด") },
-            text = { Text("จะลบรูป/ข้อมูลทั้งหมด และรีเซ็ตตัวจับเวลา/การแจ้งเตือนทั้งหมด\n\nยืนยันหรือไม่?") },
+            title = { Text("ลบข้อมูลทั้งหมด") },
+            text = { Text("ภาพและข้อมูลทั้งหมดจะถูกลบ พร้อมหยุดจับเวลาและแจ้งเตือน") },
             containerColor = MintCardBg,
             confirmButton = {
                 GhostDialogButton(
@@ -568,8 +669,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         val target = confirmDeletePendingPhoto!!
         GhostDialog(
             onDismissRequest = { confirmDeletePendingPhoto = null },
-            title = { Text("ลบรูป ${target.tag}") },
-            text = { Text("รูปนี้จะถูกลบ และรูป pending ถัดไปจะเลื่อนลำดับมาแทนที่อัตโนมัติ\n\nยืนยันหรือไม่?") },
+            title = { Text("ลบภาพ ${target.tag}") },
+            text = { Text("ภาพนี้จะถูกลบ และระบบจะจัดลำดับภาพที่เหลือให้ใหม่") },
             containerColor = MintCardBg,
             confirmButton = {
                 GhostDialogButton(
@@ -577,7 +678,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                         confirmDeletePendingPhoto = null
                         viewModel.deletePendingPhoto(target.id)
                     }, tone = UtilityTone.Coral
-                ) { Text("ลบรูป") }
+                ) { Text("ลบภาพ") }
             },
             dismissButton = {
                 GhostDialogButton(
@@ -592,7 +693,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         GhostDialog(
             onDismissRequest = { confirmDeletePendingPair = null },
             title = { Text("ลบทั้งคู่ IN-${pair.index} และ OUT-${pair.index}") },
-            text = { Text("รูป pending ทั้ง 2 รูปจะถูกลบ และรูป pending ถัดไปจะเลื่อนลำดับมาแทนที่อัตโนมัติ\n\nยืนยันหรือไม่?") },
+            text = { Text("ภาพทั้งคู่จะถูกลบ และระบบจะจัดลำดับภาพที่เหลือให้ใหม่") },
             containerColor = MintCardBg,
             confirmButton = {
                 GhostDialogButton(
@@ -600,7 +701,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                         confirmDeletePendingPair = null
                         viewModel.deletePendingPair(pair.index)
                     }, tone = UtilityTone.Coral
-                ) { Text("ลบทั้ง 2 รูป") }
+                ) { Text("ลบทั้งคู่") }
             },
             dismissButton = {
                 GhostDialogButton(
@@ -614,7 +715,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         GhostDialog(
             onDismissRequest = { confirmResetTimer = false },
             title = { Text("รีเซ็ตตัวจับเวลา") },
-            text = { Text("จะหยุดการจับเวลาและยกเลิกการแจ้งเตือน (Alarm) ทั้งหมด\n\nยืนยันหรือไม่?") },
+            text = { Text("หยุดจับเวลาและยกเลิกการแจ้งเตือนทั้งหมด") },
             containerColor = MintCardBg,
             confirmButton = {
                 GhostDialogButton(
@@ -635,17 +736,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (gateDialog) {
         GhostDialog(
             onDismissRequest = { gateDialog = false },
-            title = { Text("เงื่อนไขก่อนเริ่มตารางแจ้งเตือน") },
+            title = { Text("เริ่มการแจ้งเตือน") },
             text = {
                 Text(
-                    "ต้อง Export (Download) รูปอย่างน้อย 1 รูปก่อน\n" +
-                        "เพื่อให้ระบบ “เปิด Gate” และเริ่มคำนวณตารางแจ้งเตือนแบบแม่นยำ\n\n" +
-                        "หมายเหตุ: คุณยังสามารถเพิ่ม/แก้รูปได้ตามปกติ แต่การตั้ง Alarm จะยังไม่เริ่มจนกว่าจะ Export อย่างน้อย 1 รูป"
+                    "ดาวน์โหลดภาพแรกก่อน ระบบจึงจะเริ่มแจ้งเตือนภาพถัดไป"
                 )
             },
             containerColor = MintCardBg,
             confirmButton = {
-                GhostDialogButton(onClick = { gateDialog = false }, tone = UtilityTone.Mint) { Text("เข้าใจแล้ว") }
+                GhostDialogButton(onClick = { gateDialog = false }, tone = UtilityTone.Mint) { Text("รับทราบ") }
             }
         )
     }
@@ -656,7 +755,8 @@ fun StatusHeader(
     state: MainUiState,
     onDeleteAll: () -> Unit,
     onDownloadNext: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onActivity: () -> Unit
 ) {
     Surface(
         tonalElevation = 0.dp,
@@ -672,7 +772,9 @@ fun StatusHeader(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.weight(1f)) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    GhostMark(Modifier.size(36.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         "GhostShift",
                         style = MaterialTheme.typography.titleMedium,
@@ -683,9 +785,8 @@ fun StatusHeader(
                     )
                 }
 
-                val badgeText = "${state.downloadedPhotos.size}/${state.pendingPhotos.size + state.downloadedPhotos.size}"
-                MintBadge(text = badgeText, type = if (state.gateOpen) "ok" else "wait")
-                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = onActivity, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.BarChart, "สรุปงาน", tint = MintAccent) }
+                Spacer(Modifier.width(4.dp))
                 IconButton(onClick = onDeleteAll, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.DeleteOutline, contentDescription = "Delete all", tint = MintDanger, modifier = Modifier.size(20.dp))
                 }
@@ -694,57 +795,103 @@ fun StatusHeader(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                // Align Next with the ring itself, not with the labels below the rings.
-                verticalAlignment = Alignment.Top
-            ) {
-                val target = state.timer.targetAt
-                val nextAt = state.schedule.nextAt
-                val nextTag = state.schedule.nextTag
-                val intervalStartedAt = state.downloadedPhotos
-                    .maxOfOrNull { it.downloadedAt ?: Long.MIN_VALUE }
-                    ?.takeIf { it != Long.MIN_VALUE }
-                    ?: state.timer.startAt
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (state.scheduleSettings.timerEnabled) {
-                    TargetProgressCard(targetAt = target, progress = state.targetCoverageProgress)
-                    NextCountdownCard(
-                        nextTag = nextTag,
-                        nextAt = nextAt,
-                        intervalStartedAt = intervalStartedAt,
-                        now = state.currentTime
-                    )
-                    } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("หลัง Next ล่าสุด", color = MintMuted, style = MaterialTheme.typography.bodySmall)
-                            Text(state.lastNextAt?.let { fmtDuration((state.currentTime - it).coerceAtLeast(0L)) } ?: "--:--:--", color = MintText, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val gap = (maxWidth * .016f).coerceIn(4.dp, 8.dp)
+                val buttonHeight = (maxWidth * .14f).coerceIn(48.dp, 72.dp)
+                val elapsedHeight = buttonHeight * .5f
+                val headerHeight = buttonHeight + elapsedHeight + gap
+                val enabledHeaderHeight = headerHeight * 1.5f
+                val enabledButtonHeight = (enabledHeaderHeight - gap) / 2
+                val enabledElapsedHeight = enabledButtonHeight * .5f
+                val timerHeight = enabledHeaderHeight - enabledElapsedHeight - gap
+                val ringSize = minOf((maxWidth - gap * 3) / 4 - 6.dp, timerHeight - 18.dp).coerceAtLeast(30.dp)
+                val intervalStartedAt = state.downloadedPhotos.maxOfOrNull { it.downloadedAt ?: Long.MIN_VALUE }
+                    ?.takeIf { it != Long.MIN_VALUE } ?: state.timer.startAt
+                val elapsed = state.lastNextAt?.let { fmtDuration((state.currentTime - it).coerceAtLeast(0L)) } ?: "--:--:--"
+                val nextEnabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext
+                if (!state.scheduleSettings.timerEnabled) {
+                    Column(Modifier.fillMaxWidth().height(headerHeight), verticalArrangement = Arrangement.spacedBy(gap)) {
+                        ElapsedPhotoCard(elapsed, Modifier.fillMaxWidth().height(elapsedHeight))
+                        Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                            CompactOverview(state, Modifier.weight(1f).fillMaxHeight(), onActivity, horizontal = true)
+                            ClayActionButton(
+                                text = if (state.isExportingNext) "กำลังดาวน์โหลด" else "Download Next",
+                                onClick = onDownloadNext, enabled = nextEnabled, icon = Icons.Default.DownloadForOffline,
+                                modifier = Modifier.weight(1f).fillMaxHeight(), tone = UtilityTone.Primary)
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().height(enabledHeaderHeight), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(gap)) {
+                            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                MintCard(Modifier.weight(1f).fillMaxHeight(), containerColor = headerPastel(UtilityTone.Mint), contentPadding = 1.dp) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        TargetProgressCard(state.timer.targetAt, state.targetCoverageProgress, ringSize = ringSize)
+                                    }
+                                }
+                                MintCard(Modifier.weight(1f).fillMaxHeight(), containerColor = headerPastel(UtilityTone.Sky), contentPadding = 1.dp) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        NextCountdownCard(state.schedule.nextTag, state.schedule.nextAt, intervalStartedAt, state.currentTime, ringSize = ringSize)
+                                    }
+                                }
+                            }
+                            ElapsedPhotoCard(elapsed, Modifier.fillMaxWidth().height(enabledElapsedHeight))
+                        }
+                        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(gap)) {
+                            CompactOverview(state, Modifier.fillMaxWidth().weight(1f), onActivity, horizontal = true)
+                            ClayActionButton(
+                                text = if (state.isExportingNext) "กำลังดาวน์โหลด" else "Download Next",
+                                onClick = onDownloadNext, enabled = nextEnabled, icon = Icons.Default.DownloadForOffline,
+                                modifier = Modifier.fillMaxWidth().height(enabledButtonHeight), tone = UtilityTone.Primary)
                         }
                     }
                 }
-                ClayActionButton(
-                    text = if (state.isExportingNext) "กำลังบันทึก" else "Download Next",
-                    onClick = onDownloadNext,
-                    enabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext,
-                    icon = Icons.Default.DownloadForOffline,
-                    modifier = Modifier.weight(1f).height(64.dp)
-                )
             }
-            if (state.scheduleSettings.timerEnabled) Text(
-                state.lastNextAt?.let { "Next ล่าสุด: " + fmtDuration((state.currentTime - it).coerceAtLeast(0L)) + " ที่ผ่านมา" }
-                    ?: "Next ล่าสุด: ยังไม่ได้ดาวน์โหลด",
-                color = MintMuted,
-                style = MaterialTheme.typography.bodySmall
-            )
+            WorkflowStatus(state)
+            if (state.schedule.overflowMs > 0L) {
+                val minutes = (state.schedule.overflowMs + 59999L) / 60000L
+                Text(if (state.currentTime >= (state.timer.targetAt ?: Long.MAX_VALUE))
+                    "เลยเวลาเลิกงานแล้ว · คาดว่าจะเกิน $minutes นาที"
+                    else "คาดว่าจะเกินเวลา $minutes นาที",
+                    color = MintWarn, style = MaterialTheme.typography.labelMedium)
+            }
+
         }
     }
 
+}
+
+@Composable
+private fun ElapsedPhotoCard(elapsed: String, modifier: Modifier = Modifier) {
+    val dark = LocalGhostDark.current
+    val ink = if (dark) Color(0xFFFFCBA4) else Color(0xFF934B25)
+    MintCard(modifier, containerColor = headerPastel(UtilityTone.Peach), contentPadding = 0.dp) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val compact = maxWidth < 220.dp
+            val iconSize = (maxHeight * .72f).coerceIn(16.dp, 28.dp)
+            val gap = (maxWidth * .022f).coerceIn(3.dp, 9.dp)
+            Row(Modifier.fillMaxSize().padding(horizontal = gap),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(gap)) {
+                Box(Modifier.size(iconSize).clip(CircleShape).background(ink.copy(alpha = .12f)),
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.AccessTime, contentDescription = null, tint = ink,
+                        modifier = Modifier.size(iconSize * .63f))
+                }
+                Text("จากภาพล่าสุด", color = ink,
+                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.weight(1f))
+                Box(Modifier.clip(RoundedCornerShape(9.dp)).background(ink.copy(alpha = .08f))
+                    .padding(horizontal = gap, vertical = 1.dp), contentAlignment = Alignment.Center) {
+                    Text(elapsed, color = ink, fontWeight = FontWeight.Bold,
+                        style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleMedium,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, maxLines = 1)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -857,7 +1004,7 @@ fun StickyBottomBar(
                     icon = Icons.Default.PhotoCamera,
                     contentDescription = "ถ่ายภาพ",
                     tone = UtilityTone.Sky,
-                    modifier = Modifier.weight(0.8f).height(48.dp)
+                    modifier = Modifier.weight(1.15f).height(48.dp)
                 )
                 ClayIconButton(
                     onClick = onUpload,
@@ -880,7 +1027,7 @@ private fun SectionHeaderCard(
     onAction: (() -> Unit)? = null,
     compactActionOnly: Boolean = false
 ) {
-    MintCard(contentPadding = if (compactActionOnly) 2.dp else 8.dp) {
+    GroupHeader {
         if (compactActionOnly && !actionText.isNullOrBlank() && onAction != null) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(
@@ -891,7 +1038,7 @@ private fun SectionHeaderCard(
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
                 ) { Text(actionText, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelSmall) }
             }
-            return@MintCard
+            return@GroupHeader
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -930,11 +1077,18 @@ private fun PhotoPairCard(
     onSwap: (() -> Unit)?,
     reorderMode: Boolean,
     onPreview: (PhotoEntity) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    nextPhotoId: Long? = null,
+    cardElevation: androidx.compose.ui.unit.Dp = 1.dp,
+    neutralColor: Boolean = false
 ) {
     val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
-    MintCard(modifier = modifier, containerColor = MintCardBg, contentPadding = 10.dp) {
+    val active = nextPhotoId != null && (pair.inPhoto?.id == nextPhotoId || pair.outPhoto?.id == nextPhotoId)
+    val cardColor by animateColorAsState(pairPastel(pair.index, active, pair.fullyDownloaded, neutralColor), tween(durationMillis = if (neutralColor) 180 else 480, easing = FastOutSlowInEasing), label = "pairColor")
+    MintCard(modifier = modifier, containerColor = cardColor, contentPadding = 12.dp,
+        accentBorder = if (cardElevation >= 16.dp) MintAccent else if (active && !neutralColor) MintAccent.copy(alpha = .65f) else null,
+        elevation = cardElevation) {
         Column(Modifier.fillMaxWidth()) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -950,28 +1104,28 @@ private fun PhotoPairCard(
                             modifier = Modifier.size(30.dp)
                         )
                     } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (!pair.fullyDownloaded) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             IconButton(onClick = { onEdit?.invoke() }, enabled = onEdit != null, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(26.dp))
+                                Icon(Icons.Default.Edit, contentDescription = "แก้ไข", modifier = Modifier.size(22.dp))
                             }
                             IconButton(onClick = { onDelete?.invoke() }, enabled = onDelete != null, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MintDanger, modifier = Modifier.size(26.dp))
+                                Icon(Icons.Default.Delete, contentDescription = "ลบภาพ", tint = MintDanger, modifier = Modifier.size(22.dp))
                             }
                         }
                     }
                 }
                 Box(Modifier.weight(0.85f)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
-                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f))
+                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
+                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
                     }
-                    if (!reorderMode && onSwap != null) {
+                    if (!reorderMode && !pair.fullyDownloaded) {
                         ClayIconButton(
-                            onClick = onSwap,
-                            enabled = canSwap,
+                            onClick = { onSwap?.invoke() },
+                            enabled = canSwap && onSwap != null,
                             icon = Icons.Default.SwapHoriz,
                             contentDescription = "Swap IN and OUT",
-                            modifier = Modifier.align(Alignment.Center).size(50.dp)
+                            modifier = Modifier.align(Alignment.Center).size(44.dp)
                         )
                     }
                 }
@@ -1002,49 +1156,43 @@ private fun PairPhoto(
     dueAt: Long?,
     currentTime: Long,
     onPreview: (PhotoEntity) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    nextPhotoId: Long? = null
 ) {
     val contextForImage = LocalContext.current
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
-    val dueBorderAlpha = if (due) rememberInfiniteTransition(label = "dueBorder").animateFloat(
-        initialValue = 0.28f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 650),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "dueBorderAlpha"
-    ).value else 1f
+    val isNext = nextPhotoId != null && photo?.id == nextPhotoId
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1.35f)
+                .clip(MaterialTheme.shapes.small)
                 .background(MintSoft, MaterialTheme.shapes.small)
                 .then(
                     if (due) {
-                        Modifier.border(3.dp, MintDanger.copy(alpha = dueBorderAlpha), MaterialTheme.shapes.small)
-                    } else {
-                        Modifier
-                    }
+                        Modifier.border(2.dp, MintDanger, MaterialTheme.shapes.small)
+                    } else if (isNext) {
+                        Modifier.border(2.dp, MintAccent, MaterialTheme.shapes.small)
+                    } else Modifier
                 )
-                .then(if (downloaded) Modifier.alpha(0.42f) else Modifier)
                 .clickable(enabled = !photo?.filePath.isNullOrBlank()) { photo?.let(onPreview) }
         ) {
             if (photo != null && photo.filePath.isNotBlank()) {
                 AsyncImage(
                     model = remember(photo.filePath) { ImageRequest.Builder(contextForImage).data("file://${photo.filePath}").crossfade(false).build() },
                     contentDescription = label,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().alpha(if (downloaded) 0.68f else 1f),
                     contentScale = ContentScale.Crop
                 )
             } else {
                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = MintMuted, modifier = Modifier.align(Alignment.Center).size(36.dp))
             }
             if (downloaded) {
-                MintBadge(text = "EXPORTED", type = "ok", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
+                MintBadge(text = "✓ ดาวน์โหลดแล้ว", type = "ok", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
             }
+            if (isNext && !due && !downloaded) MintBadge("ถัดไป", "ok", Modifier.align(Alignment.TopStart).padding(4.dp))
             if (due) {
                 Surface(
                     color = MintDanger,
@@ -1065,8 +1213,8 @@ private fun PairPhoto(
             photo == null || photo.filePath.isBlank() -> Text("$label • ยังไม่มีภาพ", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
             due -> Text("$label • ถึงเวลาแล้ว", style = MaterialTheme.typography.labelSmall, color = MintDanger, maxLines = 1)
             dueAt != null && !downloaded -> Text("$label • ${fmtTime(dueAt)}", style = MaterialTheme.typography.labelSmall, color = MintAccent, maxLines = 1)
-            downloaded -> Text("$label • Exported", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
-            else -> Text("$label • Pending", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
+            downloaded -> Text("$label • ดาวน์โหลดแล้ว", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
+            else -> Text("$label • พร้อม", style = MaterialTheme.typography.labelSmall, color = MintMuted, maxLines = 1)
         }
     }
 }
@@ -1091,7 +1239,7 @@ private fun PhotoChoiceDialog(
                     OutlinedTextField(
                         value = remark,
                         onValueChange = { remark = it.take(120) },
-                        label = { Text("Remark เช่น เลขสาขา") },
+                        label = { Text("หมายเหตุ เช่น เลขสาขา") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1115,7 +1263,7 @@ private fun PhotoChoiceDialog(
                             pair.inPhoto != null && pair.outPhoto != null,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = MintDanger, contentColor = Color.White)
-                    ) { Text("ลบทั้ง 2 รูป") }
+                    ) { Text("ลบทั้งคู่") }
                 }
             }
         },

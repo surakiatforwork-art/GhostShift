@@ -34,32 +34,35 @@ fun MintCard(
     modifier: Modifier = Modifier,
     containerColor: Color = MintCardBg,
     contentPadding: Dp = 14.dp,
+    accentBorder: Color? = null,
+    elevation: Dp = 1.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(18.dp)
     Column(
         modifier = modifier
-            .shadow(2.dp, shape, spotColor = MintShadow)
+            .shadow(elevation, shape, clip = false, ambientColor = MintShadow, spotColor = MintShadow)
             .clip(shape)
             .background(containerColor)
-            .border(1.dp, MintLine.copy(alpha = 0.8f), shape)
+            .border(1.dp, accentBorder ?: MintLine.copy(alpha = 0.8f), shape)
             .padding(contentPadding),
         content = content
     )
 }
 
-enum class UtilityTone { Neutral, Mint, Sky, Lavender, Peach, Coral, Aqua }
+enum class UtilityTone { Primary, Neutral, Mint, Sky, Lavender, Peach, Coral, Aqua }
 
 @Composable
 private fun toneColors(tone: UtilityTone): Pair<Color, Color> {
     val dark = LocalGhostDark.current
     return when (tone) {
-        UtilityTone.Mint -> if (dark) Color(0xFF245447) to Color(0xFFB1F8DB) else Color(0xFF9EE9CB) to Color(0xFF104B37)
-        UtilityTone.Sky -> if (dark) Color(0xFF293F5D) to Color(0xFFB9DBFF) else Color(0xFFBBDFFF) to Color(0xFF174A83)
-        UtilityTone.Lavender -> if (dark) Color(0xFF423658) to Color(0xFFE0CFFF) else Color(0xFFE3D7FF) to Color(0xFF583A91)
-        UtilityTone.Peach -> if (dark) Color(0xFF533C29) to Color(0xFFFFC68E) else Color(0xFFFFD6AD) to Color(0xFF81470E)
+        UtilityTone.Primary -> Color(0xFF7650E6) to Color.White
+        UtilityTone.Mint -> if (dark) Color(0xFF245447) to Color(0xFFB1F8DB) else Color(0xFFE0F7EF) to Color(0xFF087C61)
+        UtilityTone.Sky -> if (dark) Color(0xFF293F5D) to Color(0xFFB9DBFF) else Color(0xFFDDEEFF) to Color(0xFF2364BE)
+        UtilityTone.Lavender -> if (dark) Color(0xFF423658) to Color(0xFFE0CFFF) else Color(0xFFECE1FF) to Color(0xFF6942C5)
+        UtilityTone.Peach -> if (dark) Color(0xFF533C29) to Color(0xFFFFC68E) else Color(0xFFFFE8D5) to Color(0xFF81470E)
         UtilityTone.Coral -> MintErrBg to MintErrText
-        UtilityTone.Aqua -> if (dark) Color(0xFF214E50) to Color(0xFFA8F5EE) else Color(0xFF9BECE4) to Color(0xFF12595B)
+        UtilityTone.Aqua -> if (dark) Color(0xFF214E50) to Color(0xFFA8F5EE) else Color(0xFFD8F7F3) to Color(0xFF12595B)
         UtilityTone.Neutral -> MintCardBg to MintText
     }
 }
@@ -73,15 +76,15 @@ internal fun GlassControl(
     val dark = LocalGhostDark.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && enabled) .97f else 1f, tween(100), label = "glassPress")
-    val shape = RoundedCornerShape(9.dp)
+    val scale by animateFloatAsState(if (pressed && enabled) .97f else 1f, tween(if (pressed) 75 else 125), label = "glassPress")
+    val shape = RoundedCornerShape(16.dp)
     val fill = if (enabled) base else lerp(base, MintBg, .75f)
     val fg = if (enabled) ink else MintMuted2
-    val edge = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) .32f else .96f), MintLine, Color.Black.copy(alpha = if (dark) .45f else .16f)))
+    val edge = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) .20f else .95f), MintLine.copy(alpha = .65f)))
     Box(modifier.graphicsLayer { scaleX = scale; scaleY = scale }
-        .shadow(if (enabled && !pressed) 3.dp else 0.dp, shape)
+        .shadow(if (enabled && !pressed) 2.dp else 0.dp, shape)
         .clip(shape)
-        .background(Brush.verticalGradient(listOf(lerp(fill, Color.White, if (dark) .10f else .28f), fill, lerp(fill, Color.Black, .06f))))
+        .background(Brush.verticalGradient(listOf(lerp(fill, Color.White, if (dark) .06f else .12f), fill, lerp(fill, Color.Black, .02f))))
         .border(1.dp, edge, shape)
         .clickable(enabled = enabled, interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center

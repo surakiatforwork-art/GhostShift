@@ -65,7 +65,7 @@ class ScheduleCalculatorTest {
         assertFalse("Should be false because photo chain is too short", result.ok)
         val err = result.error
         assertTrue("Error should be about missing photos or time. Got: $err", 
-            err.contains("ขาดรูป") || err.contains("รูปไม่พอ") || err.contains("missing"))
+            err.contains("ยังไม่มีภาพ") || err.contains("ภาพที่มีไม่พอ") || err.contains("missing"))
     }
 
     @Test
@@ -160,5 +160,31 @@ class ScheduleCalculatorTest {
 
         assertTrue(result.error, result.ok)
         assertEquals(targetAt, result.planAtByTag["IN-2"])
+    }
+
+    @Test
+    fun overflow_keepsMinimumsBeforeAndAfterTarget() {
+        val base = 1_700_000_000_000L
+        val photos = listOf(
+            createPhoto(1, "IN-1", Kind.IN, true, base),
+            createPhoto(2, "OUT-1", Kind.OUT, false),
+            createPhoto(3, "IN-2", Kind.IN, false)
+        )
+        for (target in listOf(base + 120_000L, base, base - 60_000L)) {
+            val result = ScheduleCalculator.computeScheduleExactFit(photos, TimerState(true,false,base-600_000L,target))
+            assertFalse(result.ok)
+            assertEquals(base+180_000L, result.nextAt)
+            assertEquals(base+420_000L, result.planAtByTag["IN-2"])
+            assertEquals(base+420_000L-target,result.overflowMs)
+        }
+    }
+
+    @Test
+    fun exactMinimumDoesNotOverflow() {
+        val base = 1_700_000_000_000L
+        val photos = listOf(createPhoto(1,"IN-1",Kind.IN,true,base),createPhoto(2,"OUT-1",Kind.OUT,false))
+        val result = ScheduleCalculator.computeScheduleExactFit(photos,TimerState(true,false,base,base+180_000L))
+        assertTrue(result.ok)
+        assertEquals(0L,result.overflowMs)
     }
 }

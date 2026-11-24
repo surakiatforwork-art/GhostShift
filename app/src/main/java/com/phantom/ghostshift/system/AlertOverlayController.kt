@@ -44,7 +44,7 @@ object AlertOverlayController {
             elevation = dp(appContext, 6).toFloat()
             isClickable = true
         }
-        panel.addView(label(appContext, "GhostShift • ถึงเวลาแล้ว", 15, muted, Typeface.BOLD))
+        panel.addView(label(appContext, "ถึงเวลาดาวน์โหลด", 15, muted, Typeface.BOLD))
         panel.addView(label(appContext, "PHOTO READY", 22, ink, Typeface.BOLD).apply {
             setPadding(0, dp(appContext, 12), 0, 0)
         })
@@ -71,14 +71,16 @@ object AlertOverlayController {
                 gravity = Gravity.CENTER
             })
         }
-        action("เปิด GhostShift", mint, mintInk, true) {
-            val wasVisible = MainActivity.isVisible
+        fun openGhostShift() {
             acknowledge(appContext)
-            if (!wasVisible) appContext.startActivity(Intent(appContext, MainActivity::class.java).apply {
+            appContext.startActivity(Intent(appContext, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             })
         }
-        action("รับทราบ / หยุดเสียง", if (dark) Color.rgb(52,63,75) else Color.rgb(232,237,242), ink, false) {
+        panel.setOnClickListener { openGhostShift() }
+        panel.isFocusable = true
+        action("เปิด GhostShift", mint, mintInk, true) { openGhostShift() }
+        action("หยุดเสียง", if (dark) Color.rgb(52,63,75) else Color.rgb(232,237,242), ink, false) {
             acknowledge(appContext)
         }
 

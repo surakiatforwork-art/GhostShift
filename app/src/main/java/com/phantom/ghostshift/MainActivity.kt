@@ -52,7 +52,9 @@ class MainActivity : ComponentActivity() {
                         initialShareHandled = true
                     }
                 }
-                com.phantom.ghostshift.ui.MainScreen(viewModel, themeMode = themeMode, onThemeModeChanged = { mode -> scope.launch { appContainer.userPreferences.setThemeMode(mode) } })
+                com.phantom.ghostshift.ui.UpdateHost {
+                    com.phantom.ghostshift.ui.MainScreen(viewModel, themeMode = themeMode, onThemeModeChanged = { mode -> scope.launch { appContainer.userPreferences.setThemeMode(mode) } })
+                }
             }
         }
     }

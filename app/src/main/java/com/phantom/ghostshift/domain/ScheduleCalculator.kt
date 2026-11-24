@@ -11,7 +11,7 @@ object ScheduleCalculator {
         val startAt = timer.startAt
         val targetAt = timer.targetAt
         if (!timer.running || startAt == null || targetAt == null) {
-            return ScheduleResult(false, error = "เริ่มนับเวลาก่อน", nextTag = SlotManager.computeNextSlot(photos))
+            return ScheduleResult(false, error = "ยังไม่เริ่มจับเวลา", nextTag = SlotManager.computeNextSlot(photos))
         }
 
         val pendingByTag = photos.filter { !it.downloaded }.associateBy { it.tag }
@@ -29,12 +29,12 @@ object ScheduleCalculator {
             chain += photo
             tag = SlotManager.nextTagInSequence(tag) ?: break
         }
-        if (chain.isEmpty()) return ScheduleResult(false, error = "ขาดรูป $nextExpected", nextTag = nextExpected)
+        if (chain.isEmpty()) return ScheduleResult(false, error = "ยังไม่มีภาพ $nextExpected", nextTag = nextExpected)
 
         val baseTime = last?.downloadedAt ?: startAt
         val totalMs = targetAt - baseTime
-        if (totalMs <= 0L) return ScheduleResult(false, error = "เลยเวลาเป้าหมายแล้ว", nextTag = chain.first().tag, nextAt = System.currentTimeMillis())
-        if (last == null && chain.size == 1) {
+
+        if (last == null && chain.size == 1 && totalMs >= 0L) {
             val photo = chain.first()
             return ScheduleResult(true, nextTag = photo.tag, nextAt = targetAt, planAtByTag = mapOf(photo.tag to targetAt), items = listOf(ScheduleItem(photo.tag, targetAt, photo.kind)))
         }
@@ -68,14 +68,15 @@ object ScheduleCalculator {
             }
         }
         val error = when {
-            totalMs < minimumTotal -> "เวลาน้อยกว่าค่าขั้นต่ำที่ตั้งไว้"
-            finiteMaximumTotal != null && totalMs > finiteMaximumTotal -> if (missingTag != null) "ขาดรูป $missingTag" else "รูปไม่พอถึงเป้าหมาย"
+            totalMs < minimumTotal -> "เวลาไม่พอสำหรับภาพที่เหลือ"
+            finiteMaximumTotal != null && totalMs > finiteMaximumTotal -> if (missingTag != null) "ยังไม่มีภาพ $missingTag" else "ภาพที่มีไม่พอถึงเวลาเลิกงาน"
             else -> ""
         }
         return ScheduleResult(
             ok = error.isEmpty(), error = error, nextTag = chain.first().tag,
             nextAt = plan[chain.first().tag], planAtByTag = plan,
-            items = chain.map { ScheduleItem(it.tag, plan[it.tag] ?: baseTime, it.kind) }
+            items = chain.map { ScheduleItem(it.tag, plan[it.tag] ?: baseTime, it.kind) },
+            overflowMs = ((plan.values.lastOrNull() ?: baseTime) - targetAt).coerceAtLeast(0L)
         )
     }
 

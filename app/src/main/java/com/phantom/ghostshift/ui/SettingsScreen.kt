@@ -117,7 +117,7 @@ fun SettingsScreen(
                     set(Calendar.MILLISECOND, 0)
                 }.timeInMillis
                 if (selected <= System.currentTimeMillis()) {
-                    Toast.makeText(context, "เวลาเลิกงานต้องมากกว่าเวลาปัจจุบัน", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "เลือกเวลาเลิกงานที่ยังไม่ผ่าน", Toast.LENGTH_SHORT).show()
                 } else {
                     onFinishTimeSelected(selected)
                     Toast.makeText(context, "บันทึกเวลาเลิกงานแล้ว", Toast.LENGTH_SHORT).show()
@@ -163,10 +163,9 @@ fun SettingsScreen(
             SettingsGroupLabel("การแสดงผล")
             MintCard {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("ธีมแอป", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                    Text("เลือกรูปแบบการแสดงผล", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    Text("ธีม", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("system" to "ตามอุปกรณ์", "dark" to "มืด", "light" to "สว่าง").forEach { (mode, label) ->
+                        listOf("system" to "ตามระบบ", "dark" to "มืด", "light" to "สว่าง").forEach { (mode, label) ->
                             FilterChip(
                                 selected = themeMode == mode,
                                 onClick = { onThemeModeChanged(mode) },
@@ -182,63 +181,22 @@ fun SettingsScreen(
             MintCard {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("ระบบจับเวลาและแจ้งเตือน", style = MaterialTheme.typography.titleMedium, color = MintText)
+                        Text("จับเวลาและแจ้งเตือน", style = MaterialTheme.typography.titleMedium, color = MintText)
                         Text("เปิดเพื่อกำหนดระยะเวลาทำงานและรับแจ้งเตือน", style = MaterialTheme.typography.bodySmall, color = MintMuted)
                     }
                     Switch(checked = state.scheduleSettings.timerEnabled, onCheckedChange = onTimerEnabledChanged)
                 }
             }
             if (state.scheduleSettings.timerEnabled) {
-            // Target Time Section
-            MintCard {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "ระยะเวลาทำงาน (Target)",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MintText,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                    )
-                    Text(
-                        targetSummary,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MintText
-                    )
-                    Text(
-                        if (fixedFinish != null) {
-                            "ค่าเริ่มต้นสำหรับวันที่ไม่ได้กำหนดเวลาเลิกงานเอง"
-                        } else if (state.timer.running) {
-                            "Timer กำลังทำงาน: เปลี่ยนค่าแล้วตารางแจ้งเตือนจะอัปเดตทันที"
-                        } else {
-                            "Timer ยังไม่เริ่ม: ค่านี้จะถูกใช้ตอนกด Start ครั้งถัดไป"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MintMuted
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { openTargetPicker() },
-                            colors = ButtonDefaults.buttonColors(containerColor = MintAccent)
-                        ) {
-                            Icon(Icons.Default.Schedule, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("ตั้งเวลา Target")
-                        }
-                        OutlinedButton(onClick = { showResetTimerConfirmation = true }) {
-                            Icon(Icons.Default.RestartAlt, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("รีเซ็ต")
-                        }
-                    }
-                }
-            }
-
-            MintCard {
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MintCard(Modifier.weight(.7f).fillMaxHeight(), contentPadding = 10.dp) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("เวลาเลิกงาน", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     Text(fixedFinish?.let { formatTargetDateTime(it) + if (it <= state.currentTime) " (ผ่านแล้ว)" else "" }
-                        ?: state.timer.targetAt?.let { formatTargetDateTime(it) + " (ตาม Target)" }
+                        ?: state.timer.targetAt?.let { formatTargetDateTime(it) + " (ตามระยะเวลาทำงาน)" }
                         ?: "ยังไม่ได้กำหนดเวลาเลิกงานเอง", style = MaterialTheme.typography.bodyLarge, color = MintText)
-                    Text("กำหนดวันและเวลาเลิกงานสำหรับรอบนี้โดยตรง โดยไม่เปลี่ยนระยะเวลา Target เริ่มต้น", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    Text("ตั้งเวลาเลิกงานเฉพาะรอบนี้ โดยไม่เปลี่ยนระยะเวลาเดิม", style = MaterialTheme.typography.bodySmall, color = MintMuted)
                     Button(onClick = { openFinishPicker() }, colors = ButtonDefaults.buttonColors(containerColor = MintAccent), modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Default.Schedule, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -246,16 +204,41 @@ fun SettingsScreen(
                     }
                     if (fixedFinish != null) {
                         OutlinedButton(onClick = { onFinishTimeSelected(null) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("กลับไปใช้ระยะเวลา Target")
+                            Text("ใช้ระยะเวลาเดิม")
                         }
                     }
                 }
             }
+            MintCard(Modifier.weight(.3f).fillMaxHeight(), contentPadding = 6.dp) {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("ระยะเวลาทำงาน", style = MaterialTheme.typography.labelMedium,
+                        color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text(targetSummary, style = MaterialTheme.typography.titleSmall,
+                        color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text(if (fixedFinish != null) "ค่าเริ่มต้น" else if (state.timer.running) "ปรับแจ้งเตือนทันที" else "ใช้เมื่อกด Start",
+                        style = MaterialTheme.typography.labelSmall, color = MintMuted,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Spacer(Modifier.height(2.dp))
+                    Button(onClick = { openTargetPicker() }, modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MintAccent),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)) {
+                        Text("ตั้งเวลา", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    }
+                    OutlinedButton(onClick = { showResetTimerConfirmation = true }, modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)) {
+                        Text("รีเซ็ต", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    }
+                }
+            }
+            }
 
             MintCard {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("ช่วงเวลาระหว่างภาพ", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                    Text("เว้นช่องเวลาสูงสุดว่างไว้ หากไม่ต้องการจำกัด", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    Text("ช่วงห่างระหว่างภาพ", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("เว้นว่างไว้หากไม่จำกัดเวลาสูงสุด", style = MaterialTheme.typography.bodySmall, color = MintMuted)
                     TimingFields("IN → OUT", inOutMin, { inOutMin = it.filter(Char::isDigit) }, inOutMax, { inOutMax = it.filter(Char::isDigit) })
                     TimingFields("OUT → IN", outInMin, { outInMin = it.filter(Char::isDigit) }, outInMax, { outInMax = it.filter(Char::isDigit) })
                     Button(onClick = { saveTiming() }, colors = ButtonDefaults.buttonColors(containerColor = MintAccent)) {
@@ -264,8 +247,8 @@ fun SettingsScreen(
                     Divider(color = MintLine)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("เริ่มนับเวลาอัตโนมัติ", color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                            Text("เริ่ม Timer เมื่อกด Download Next ที่ IN-1", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                            Text("เริ่มจับเวลาอัตโนมัติ", color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            Text("เริ่มจับเวลาเมื่อดาวน์โหลด IN-1", style = MaterialTheme.typography.bodySmall, color = MintMuted)
                         }
                         Switch(
                             checked = state.scheduleSettings.autoStartOnFirstDownload,
@@ -275,7 +258,7 @@ fun SettingsScreen(
                     Divider(color = MintLine)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("เล่นเสียงเตือนซ้ำ", color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            Text("เตือนซ้ำ", color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                             Text("ปิดไว้เพื่อเล่นเสียงเพียงครั้งเดียว", style = MaterialTheme.typography.bodySmall, color = MintMuted)
                         }
                         Switch(
@@ -323,7 +306,7 @@ fun SettingsScreen(
                 }
             }
 
-            SettingsGroupLabel("สิทธิ์และความเสถียร")
+            SettingsGroupLabel("สิทธิ์การใช้งาน")
             // Permissions Section
             MintCard {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -407,6 +390,7 @@ fun SettingsScreen(
                  }
             }
             }
+            UpdateSettingsCard()
         }
     }
 
@@ -423,25 +407,25 @@ fun SettingsScreen(
                     OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit).take(2) }, label = { Text("นาที") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                 }
             },
-            confirmButton = { Button(enabled = valid, onClick = { proposed = h!! * 60 + m!!; targetStep = 2 }) { Text("ดำเนินการต่อ") } },
+            confirmButton = { Button(enabled = valid, onClick = { proposed = h!! * 60 + m!!; targetStep = 2 }) { Text("ถัดไป") } },
             dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = { targetStep = 0 }) { Text("ยกเลิก") } }
         )
     }
     if (state.scheduleSettings.timerEnabled && targetStep == 2) {
         GhostDialog(
             onDismissRequest = { targetStep = 0 },
-            title = { Text("แนะนำให้เผื่อเวลาอีก 10 นาที") },
+            title = { Text("เผื่อเวลาอีก 10 นาทีไหม?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("ระยะเวลาที่เลือก: " + durationText(proposed))
-                    Text("แนะนำให้เผื่อเวลาสำหรับขั้นตอนนำภาพไปใช้งาน")
-                    Text("เมื่อเพิ่มเวลา: " + durationText(proposed + 10))
+                    Text("ระยะเวลาเดิม: " + durationText(proposed))
+                    Text("เผื่อเวลาสำหรับนำภาพไปใช้หลังดาวน์โหลด")
+                    Text("เมื่อเผื่อเวลา: " + durationText(proposed + 10))
                 }
             },
             confirmButton = {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(onClick = { confirmTarget(10) }, modifier = Modifier.fillMaxWidth()) { Text("ยืนยัน เพิ่ม 10 นาที") }
-                    OutlinedButton(onClick = { confirmTarget(0) }, modifier = Modifier.fillMaxWidth()) { Text("ยืนยัน ไม่เพิ่มเวลา 10 นาที") }
+                    Button(onClick = { confirmTarget(10) }, modifier = Modifier.fillMaxWidth()) { Text("เพิ่ม 10 นาที") }
+                    OutlinedButton(onClick = { confirmTarget(0) }, modifier = Modifier.fillMaxWidth()) { Text("ไม่เพิ่มเวลา") }
                     GhostDialogButton(onClick = { targetStep = 0 }, modifier = Modifier.fillMaxWidth()) { Text("ยกเลิก") }
                 }
             }
@@ -450,7 +434,7 @@ fun SettingsScreen(
     if (state.scheduleSettings.timerEnabled && targetStep == 3) {
         GhostDialog(
             onDismissRequest = { targetStep = 0 },
-            title = { Text("ตั้งค่าเวลาทำงานระหว่างวันสำเร็จ") },
+            title = { Text("บันทึกระยะเวลาแล้ว") },
             text = { Text(durationText(savedTarget) + "\n\nตัวอย่าง: หากเริ่มงานหรือเริ่มนับเวลา 08:00 น. คุณจะเลิกงานเวลา " + finishText(savedTarget) + " น.") },
             confirmButton = { Button(onClick = { targetStep = 0 }) { Text("เรียบร้อย") } }
         )
@@ -460,7 +444,7 @@ fun SettingsScreen(
             onDismissRequest = { showResetTimerConfirmation = false },
             title = { Text("รีเซ็ตเวลา?") },
             text = {
-                Text("การรีเซ็ตจะหยุดจับเวลา ยกเลิกเวลาเลิกงานที่กำหนดเองและตารางแจ้งเตือน โดยยังเก็บระยะเวลา Target เริ่มต้นไว้")
+                Text("หยุดจับเวลาและยกเลิกการแจ้งเตือน พร้อมล้างเวลาเลิกงานเฉพาะรอบนี้ ระยะเวลาเดิมยังอยู่")
             },
             confirmButton = {
                 GhostDialogButton(

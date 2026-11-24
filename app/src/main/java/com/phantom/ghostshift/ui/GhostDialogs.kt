@@ -99,16 +99,16 @@ fun ExportProgressDialog(progress: ExportProgress, dismissError: () -> Unit) {
                     }
                 }
                 Text(when (progress.stage) {
-                    ExportStage.Loading -> "กำลังบันทึก"
-                    ExportStage.Success -> "บันทึกสำเร็จ"
-                    ExportStage.Error -> "บันทึกไม่สำเร็จ"
+                    ExportStage.Loading -> "กำลังดาวน์โหลด"
+                    ExportStage.Success -> "ดาวน์โหลดแล้ว"
+                    ExportStage.Error -> "ดาวน์โหลดไม่สำเร็จ"
                 }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(progress.tag, color = if (error) MintErrText else MintAccent, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 progress.remark?.takeIf { it.isNotBlank() }?.let { Text(it, color = MintMuted, textAlign = TextAlign.Center) }
                 Text(when (progress.stage) {
                     ExportStage.Loading -> "กำลังดาวน์โหลดภาพ"
-                    ExportStage.Success -> "ดาวน์โหลดภาพเรียบร้อยแล้ว"
-                    ExportStage.Error -> "กรุณาตรวจสอบไฟล์และลองใหม่"
+                    ExportStage.Success -> "ดาวน์โหลดแล้ว"
+                    ExportStage.Error -> "ตรวจสอบไฟล์แล้วลองอีกครั้ง"
                 }, style = MaterialTheme.typography.bodySmall, color = MintMuted, textAlign = TextAlign.Center)
                 if (error) GhostDialogButton(onClick = dismissError, modifier = Modifier.fillMaxWidth(), tone = UtilityTone.Coral) { Text("รับทราบ") }
             }

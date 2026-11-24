@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 import com.phantom.ghostshift.ui.theme.MintAccent
 import com.phantom.ghostshift.ui.theme.MintCardBg
 import com.phantom.ghostshift.ui.theme.MintClayHighlight
@@ -41,15 +43,15 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Modifier) {
+fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Modifier, ringSize: Dp = 68.dp) {
     val trackColor = MintLine
     Column(
-        modifier = modifier.width(72.dp),
+        modifier = modifier.width(ringSize + 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(68.dp)
+                .size(ringSize)
                 .shadow(2.dp, CircleShape, spotColor = MintClayShadow)
                 .clip(CircleShape)
                 .background(Brush.verticalGradient(listOf(MintCardBg, MintSoft)))
@@ -60,12 +62,12 @@ fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Mo
                 Text("-", color = MintText, style = MaterialTheme.typography.labelLarge)
             } else {
                 // Keep the canvas inset so the thick stroke is never clipped by its bounds.
-                Canvas(Modifier.size(60.dp)) {
+                Canvas(Modifier.size(ringSize - 8.dp)) {
                     val stroke = Stroke(width = 8.dp.toPx())
                     drawArc(trackColor, -90f, 360f, false, style = stroke)
                     drawArc(Color(0xFF24B883), -90f, 360f * progress, false, style = stroke)
                 }
-                Text(formatTime(targetAt), color = MintText, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                Text(formatTime(targetAt), color = MintText, style = MaterialTheme.typography.labelMedium, fontSize = if (ringSize >= 80.dp) 16.sp else 12.sp, fontWeight = FontWeight.Bold)
             }
         }
         Text("Target", color = MintMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
@@ -79,41 +81,31 @@ fun NextCountdownCard(
     nextAt: Long?,
     intervalStartedAt: Long?,
     now: Long,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    ringSize: Dp = 68.dp
 ) {
     val duration = nextAt?.let { dueAt -> intervalStartedAt?.let { dueAt - it } } ?: 0L
     val rawRemaining = nextAt?.let { it - now } ?: 0L
     val remaining = rawRemaining.coerceAtLeast(0L)
     val elapsedProgress = if (duration > 0L) ((duration - remaining).toFloat() / duration).coerceIn(0f, 1f) else 0f
     val isDue = nextAt != null && remaining == 0L
-    val pulseTransition = rememberInfiniteTransition(label = "dueRingPulse")
-    val dueAlpha = if (isDue) {
-        pulseTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 0.35f,
-            animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
-            label = "dueRingAlpha"
-        ).value
-    } else {
-        1f
-    }
-    val ringColor = lerp(MintAccent, MintDanger, elapsedProgress).copy(alpha = dueAlpha)
+    val ringColor = if (isDue) MintDanger else lerp(MintAccent, MintDanger, elapsedProgress)
 
     val trackColor = MintLine
     Column(
-        modifier = modifier.width(72.dp),
+        modifier = modifier.width(ringSize + 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(68.dp)
+                .size(ringSize)
                 .shadow(2.dp, CircleShape, spotColor = MintClayShadow)
                 .clip(CircleShape)
                 .background(Brush.verticalGradient(listOf(MintCardBg, MintSoft)))
                 .border(1.dp, MintClayHighlight, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(Modifier.size(60.dp)) {
+            Canvas(Modifier.size(ringSize - 8.dp)) {
                 val stroke = Stroke(width = 8.dp.toPx())
                 drawArc(trackColor, -90f, 360f, false, style = stroke)
                 if (nextAt != null) {
@@ -128,12 +120,13 @@ fun NextCountdownCard(
                 },
                 color = if (isDue) MintDanger else MintText,
                 style = MaterialTheme.typography.labelMedium,
+                fontSize = if (ringSize >= 80.dp) 16.sp else 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
         }
         Text(
-            nextTag?.let { "ถัดไป $it" } ?: "รูปถัดไป",
+            nextTag?.let { "ถัดไป $it" } ?: "ภาพถัดไป",
             color = MintMuted,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1

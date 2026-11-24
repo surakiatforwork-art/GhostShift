@@ -46,9 +46,9 @@ class AlarmReceiver : BroadcastReceiver() {
                     
                     // 1. Show Notification
                     val title = if (nextTag.startsWith("OUT", ignoreCase = true)) {
-                    "ครบเวลา Check Out ได้แล้ว"
+                    "ถึงเวลา OUT แล้ว"
                     } else {
-                    "ครบเวลา Check In ได้แล้ว"
+                    "ถึงเวลา IN แล้ว"
                     }
                     val body = "Next: $nextTag"
                     val showOverlay = AlertOverlayController.canShow(context)
