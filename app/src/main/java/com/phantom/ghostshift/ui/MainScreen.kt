@@ -78,31 +78,33 @@ private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outP
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "system", onThemeModeChanged: (String) -> Unit = {}) {
     val state by viewModel.uiState.collectAsState()
+    val progress by viewModel.exportProgress.collectAsState()
+    progress?.let { ExportProgressDialog(it, viewModel::dismissExportError) }
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
     var reservePair by remember { mutableStateOf(false) }
     var pairRemark by remember { mutableStateOf("") }
     confirmIn?.let { photo ->
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { confirmIn = null },
             title = { Text("ดาวน์โหลด ${photo.tag}?") },
             text = { Text(photo.remark ?: "ยืนยันเมื่อพร้อมใช้ภาพ IN นี้") },
-            confirmButton = { TextButton(onClick = {
+            confirmButton = { GhostDialogButton(onClick = {
                 confirmIn = null
                 viewModel.exportNextPhoto(photo.id, confirmedIn = true)
             }) { Text("ดาวน์โหลด") } },
-            dismissButton = { TextButton(onClick = { confirmIn = null }) { Text("ยกเลิก") } }
+            dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = { confirmIn = null }) { Text("ยกเลิก") } }
         )
     }
     if (reservePair) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { reservePair = false },
             title = { Text("เพิ่มคู่ภาพเปล่า") },
             text = { OutlinedTextField(pairRemark, { pairRemark = it.take(120) }, label = { Text("ชื่อสาขา / Remark (ไม่บังคับ)") }) },
-            confirmButton = { TextButton(onClick = {
+            confirmButton = { GhostDialogButton(tone = UtilityTone.Aqua, onClick = {
                 viewModel.reservePair(pairRemark)
                 reservePair = false
             }) { Text("เพิ่มคู่") } },
-            dismissButton = { TextButton(onClick = { reservePair = false }) { Text("ยกเลิก") } }
+            dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = { reservePair = false }) { Text("ยกเลิก") } }
         )
     }
     val context = LocalContext.current
@@ -127,7 +129,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     var reorderPairs by remember { mutableStateOf<List<PhotoPair>>(emptyList()) }
     var draggedPairId by remember { mutableStateOf<Long?>(null) }
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
-    var exportHeadsUp by remember { mutableStateOf<ExportHeadsUpEvent?>(null) }
+
     val listState = rememberLazyListState()
     val haptic = LocalHapticFeedback.current
     val edgePx = with(LocalDensity.current) { 80.dp.toPx() }
@@ -203,14 +205,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         }
     }
 
-    LaunchedEffect(viewModel) {
-        viewModel.exportHeadsUpEvents.collect { event ->
-            exportHeadsUp = event
-            delay(3_500)
-            if (exportHeadsUp == event) exportHeadsUp = null
-        }
-    }
-    
     // Internal Camera Output
     fun getOutputDirectory(context: Context): File {
         val mediaDir = context.externalMediaDirs.firstOrNull()?.let {
@@ -347,21 +341,21 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     }
 
     if (showEditDialog) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { showEditDialog = false },
-            title = { Text("Choose Option") },
-            text = { Text("Take a new photo or choose from gallery?") },
+            title = { Text("เลือกแหล่งภาพ") },
+            text = { Text("ถ่ายภาพใหม่หรือเลือกจากแกลเลอรี่") },
             confirmButton = {
-                TextButton(onClick = {
+                GhostDialogButton(tone = UtilityTone.Sky, onClick = {
                     showEditDialog = false
                     launchCamera(editTargetId)
-                }) { Text("Camera") }
+                }) { Text("ถ่ายภาพ") }
             },
             dismissButton = {
-                TextButton(onClick = {
+                GhostDialogButton(tone = UtilityTone.Lavender, onClick = {
                     showEditDialog = false
                     singlePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                }) { Text("Gallery") }
+                }) { Text("แกลเลอรี่") }
             }
         )
     }
@@ -546,36 +540,25 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             }
         }
     }
-        exportHeadsUp?.let { event ->
-            ExportSuccessFeedback(
-                event = event,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(2f),
-                onFinished = { exportHeadsUp = null }
-            )
-        }
     }
 
     if (confirmDeleteAll) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { confirmDeleteAll = false },
             title = { Text("ล้างข้อมูลทั้งหมด") },
             text = { Text("จะลบรูป/ข้อมูลทั้งหมด และรีเซ็ตตัวจับเวลา/การแจ้งเตือนทั้งหมด\n\nยืนยันหรือไม่?") },
             containerColor = MintCardBg,
             confirmButton = {
-                TextButton(
+                GhostDialogButton(
                     onClick = {
                         confirmDeleteAll = false
                         viewModel.deleteAll()
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                    }, tone = UtilityTone.Coral
                 ) { Text("ลบทั้งหมด") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { confirmDeleteAll = false },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                GhostDialogButton(
+                    onClick = { confirmDeleteAll = false }, tone = UtilityTone.Neutral
                 ) { Text("ยกเลิก") }
             }
         )
@@ -583,24 +566,22 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     if (confirmDeletePendingPhoto != null) {
         val target = confirmDeletePendingPhoto!!
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { confirmDeletePendingPhoto = null },
             title = { Text("ลบรูป ${target.tag}") },
             text = { Text("รูปนี้จะถูกลบ และรูป pending ถัดไปจะเลื่อนลำดับมาแทนที่อัตโนมัติ\n\nยืนยันหรือไม่?") },
             containerColor = MintCardBg,
             confirmButton = {
-                TextButton(
+                GhostDialogButton(
                     onClick = {
                         confirmDeletePendingPhoto = null
                         viewModel.deletePendingPhoto(target.id)
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                    }, tone = UtilityTone.Coral
                 ) { Text("ลบรูป") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { confirmDeletePendingPhoto = null },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                GhostDialogButton(
+                    onClick = { confirmDeletePendingPhoto = null }, tone = UtilityTone.Neutral
                 ) { Text("ยกเลิก") }
             }
         )
@@ -608,55 +589,51 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     if (confirmDeletePendingPair != null) {
         val pair = confirmDeletePendingPair!!
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { confirmDeletePendingPair = null },
             title = { Text("ลบทั้งคู่ IN-${pair.index} และ OUT-${pair.index}") },
             text = { Text("รูป pending ทั้ง 2 รูปจะถูกลบ และรูป pending ถัดไปจะเลื่อนลำดับมาแทนที่อัตโนมัติ\n\nยืนยันหรือไม่?") },
             containerColor = MintCardBg,
             confirmButton = {
-                TextButton(
+                GhostDialogButton(
                     onClick = {
                         confirmDeletePendingPair = null
                         viewModel.deletePendingPair(pair.index)
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                    }, tone = UtilityTone.Coral
                 ) { Text("ลบทั้ง 2 รูป") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { confirmDeletePendingPair = null },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                GhostDialogButton(
+                    onClick = { confirmDeletePendingPair = null }, tone = UtilityTone.Neutral
                 ) { Text("ยกเลิก") }
             }
         )
     }
 
     if (confirmResetTimer) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { confirmResetTimer = false },
             title = { Text("รีเซ็ตตัวจับเวลา") },
             text = { Text("จะหยุดการจับเวลาและยกเลิกการแจ้งเตือน (Alarm) ทั้งหมด\n\nยืนยันหรือไม่?") },
             containerColor = MintCardBg,
             confirmButton = {
-                TextButton(
+                GhostDialogButton(
                     onClick = {
                         confirmResetTimer = false
                         viewModel.resetTimer()
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                    }, tone = UtilityTone.Coral
                 ) { Text("รีเซ็ต") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { confirmResetTimer = false },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintText)
+                GhostDialogButton(
+                    onClick = { confirmResetTimer = false }, tone = UtilityTone.Neutral
                 ) { Text("ยกเลิก") }
             }
         )
     }
 
     if (gateDialog) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { gateDialog = false },
             title = { Text("เงื่อนไขก่อนเริ่มตารางแจ้งเตือน") },
             text = {
@@ -668,7 +645,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             },
             containerColor = MintCardBg,
             confirmButton = {
-                TextButton(onClick = { gateDialog = false }, colors = ButtonDefaults.textButtonColors(contentColor = MintAccent)) { Text("เข้าใจแล้ว") }
+                GhostDialogButton(onClick = { gateDialog = false }, tone = UtilityTone.Mint) { Text("เข้าใจแล้ว") }
             }
         )
     }
@@ -1105,7 +1082,7 @@ private fun PhotoChoiceDialog(
     onDeleteBoth: (() -> Unit)? = null
 ) {
     var remark by remember(pair.index, pair.remark) { mutableStateOf(pair.remark.orEmpty()) }
-    AlertDialog(
+    GhostDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -1144,80 +1121,14 @@ private fun PhotoChoiceDialog(
         },
         confirmButton = {
             if (onRemarkSaved != null) {
-                TextButton(onClick = {
+                GhostDialogButton(onClick = {
                     onRemarkSaved(remark)
                     onDismiss()
                 }) { Text("บันทึกหมายเหตุ") }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("ยกเลิก") } }
+        dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = onDismiss) { Text("ยกเลิก") } }
     )
-}
-
-@Composable
-private fun ExportSuccessFeedback(
-    event: ExportHeadsUpEvent,
-    modifier: Modifier = Modifier,
-    onFinished: () -> Unit
-) {
-    val readableText = buildString {
-        append("ส่งออก ${event.tag} สำเร็จ")
-        event.remark?.takeIf { it.isNotBlank() }?.let { append(", หมายเหตุ $it") }
-    }
-    val travel = remember(event) { Animatable(0f) }
-    var showPopup by remember(event) { mutableStateOf(false) }
-
-    LaunchedEffect(event) {
-        travel.snapTo(0f)
-        showPopup = false
-        travel.animateTo(1f, animationSpec = tween(650, easing = FastOutSlowInEasing))
-        showPopup = true
-        delay(2_600)
-        onFinished()
-    }
-
-    BoxWithConstraints(modifier) {
-        if (!showPopup) {
-            val dropletSize = 16.dp + (32.dp * travel.value)
-            val travelDistance = (maxHeight - 250.dp).coerceAtLeast(0.dp)
-            // The droplet starts over the Next button then lands above the bottom navigation.
-            Box(
-                modifier = Modifier
-                    .offset(
-                        x = (maxWidth * 0.75f) - (dropletSize / 2),
-                        y = 92.dp + (travelDistance * travel.value)
-                    )
-                    .size(dropletSize)
-                    .graphicsLayer {
-                        scaleX = 0.8f + (travel.value * 0.2f)
-                        scaleY = 1.15f - (travel.value * 0.15f)
-                    }
-                    .background(MintAccent, CircleShape)
-            )
-        } else {
-            Surface(
-                color = MintAccent,
-                shape = MaterialTheme.shapes.medium,
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 92.dp)
-                    .fillMaxWidth()
-                    .semantics {
-                        contentDescription = readableText
-                        liveRegion = LiveRegionMode.Assertive
-                    }
-            ) {
-                Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
-                    Text("บันทึกภาพแล้ว", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                    Text(event.tag, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    event.remark?.takeIf { it.isNotBlank() }?.let { remark ->
-                        Text(remark, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable

@@ -158,8 +158,9 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .verticalScroll(scrollState)
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            SettingsGroupLabel("การแสดงผล")
             MintCard {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("ธีมแอป", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
@@ -177,6 +178,7 @@ fun SettingsScreen(
                     }
                 }
             }
+            SettingsGroupLabel("เวลาและตารางงาน")
             MintCard {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -284,10 +286,11 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsGroupLabel("การแจ้งเตือน")
             // Sound Section
             MintCard {
                 Column {
-                    Text("Alarm Sound", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("เสียงแจ้งเตือน", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     
                     val soundName = if (currentSoundUri == null) "Default System Alarm" else "Custom Tone Selected"
@@ -320,10 +323,11 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsGroupLabel("สิทธิ์และความเสถียร")
             // Permissions Section
             MintCard {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("Permissions & Reliability", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("สิทธิ์ที่จำเป็น", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     
                     // Exact Alarm
                     if (Build.VERSION.SDK_INT >= 31) { // S
@@ -410,7 +414,7 @@ fun SettingsScreen(
         val h = hours.toIntOrNull()
         val m = minutes.toIntOrNull()
         val valid = h != null && m != null && h in 0..24 && m in 0..59 && h * 60 + m > 0
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { targetStep = 0 },
             title = { Text("กำหนดระยะเวลาทำงาน") },
             text = {
@@ -420,11 +424,11 @@ fun SettingsScreen(
                 }
             },
             confirmButton = { Button(enabled = valid, onClick = { proposed = h!! * 60 + m!!; targetStep = 2 }) { Text("ดำเนินการต่อ") } },
-            dismissButton = { TextButton(onClick = { targetStep = 0 }) { Text("ยกเลิก") } }
+            dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = { targetStep = 0 }) { Text("ยกเลิก") } }
         )
     }
     if (state.scheduleSettings.timerEnabled && targetStep == 2) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { targetStep = 0 },
             title = { Text("แนะนำให้เผื่อเวลาอีก 10 นาที") },
             text = {
@@ -438,13 +442,13 @@ fun SettingsScreen(
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Button(onClick = { confirmTarget(10) }, modifier = Modifier.fillMaxWidth()) { Text("ยืนยัน เพิ่ม 10 นาที") }
                     OutlinedButton(onClick = { confirmTarget(0) }, modifier = Modifier.fillMaxWidth()) { Text("ยืนยัน ไม่เพิ่มเวลา 10 นาที") }
-                    TextButton(onClick = { targetStep = 0 }, modifier = Modifier.fillMaxWidth()) { Text("ยกเลิก") }
+                    GhostDialogButton(onClick = { targetStep = 0 }, modifier = Modifier.fillMaxWidth()) { Text("ยกเลิก") }
                 }
             }
         )
     }
     if (state.scheduleSettings.timerEnabled && targetStep == 3) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { targetStep = 0 },
             title = { Text("ตั้งค่าเวลาทำงานระหว่างวันสำเร็จ") },
             text = { Text(durationText(savedTarget) + "\n\nตัวอย่าง: หากเริ่มงานหรือเริ่มนับเวลา 08:00 น. คุณจะเลิกงานเวลา " + finishText(savedTarget) + " น.") },
@@ -452,25 +456,24 @@ fun SettingsScreen(
         )
     }
     if (state.scheduleSettings.timerEnabled && showResetTimerConfirmation) {
-        AlertDialog(
+        GhostDialog(
             onDismissRequest = { showResetTimerConfirmation = false },
             title = { Text("รีเซ็ตเวลา?") },
             text = {
                 Text("การรีเซ็ตจะหยุดจับเวลา ยกเลิกเวลาเลิกงานที่กำหนดเองและตารางแจ้งเตือน โดยยังเก็บระยะเวลา Target เริ่มต้นไว้")
             },
             confirmButton = {
-                TextButton(
+                GhostDialogButton(
                     onClick = {
                         showResetTimerConfirmation = false
                         onResetTimer()
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MintDanger)
+                    }, tone = UtilityTone.Coral
                 ) {
                     Text("รีเซ็ต")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetTimerConfirmation = false }) {
+                GhostDialogButton(tone = UtilityTone.Neutral, onClick = { showResetTimerConfirmation = false }) {
                     Text("ยกเลิก")
                 }
             }

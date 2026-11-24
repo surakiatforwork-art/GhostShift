@@ -62,10 +62,8 @@ data class MainUiState(
     val isExportingNext: Boolean = false
 )
 
-data class ExportHeadsUpEvent(
-    val tag: String,
-    val remark: String?
-)
+enum class ExportStage { Loading, Success, Error }
+data class ExportProgress(val tag: String, val remark: String?, val stage: ExportStage)
 
 data class SharedPhotoInput(
     val uri: Uri,
@@ -89,8 +87,9 @@ class MainViewModel(
     private val isExportingNext = MutableStateFlow(false)
     private val importMutex = Mutex()
     private val shiftMutex = Mutex()
-    private val _exportHeadsUpEvents = MutableSharedFlow<ExportHeadsUpEvent>(extraBufferCapacity = 1)
-    val exportHeadsUpEvents = _exportHeadsUpEvents.asSharedFlow()
+    private val _exportProgress = MutableStateFlow<ExportProgress?>(null)
+    val exportProgress: StateFlow<ExportProgress?> = _exportProgress
+    fun dismissExportError() { if (_exportProgress.value?.stage == ExportStage.Error) { _exportProgress.value = null; isExportingNext.value = false } }
 
     // cache to avoid rescheduling every time
     private var lastAlarmKey: AlarmKey? = null
@@ -389,29 +388,44 @@ class MainViewModel(
 
     fun exportNextPhoto(expectedId: Long, confirmedIn: Boolean = false) {
         if (!isExportingNext.compareAndSet(expect = false, update = true)) return
+        val candidate = coreState.value.pendingPhotos.firstOrNull()
+        if (candidate == null || candidate.id != expectedId || candidate.filePath.isBlank() ||
+            (candidate.kind.name == "IN" && !confirmedIn)) {
+            isExportingNext.value = false
+            return
+        }
+        val loading = ExportProgress(candidate.tag, candidate.remark, ExportStage.Loading)
+        _exportProgress.value = loading
         viewModelScope.launch {
+            var saved = false
             try {
                 shiftMutex.withLock {
-                val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
-                if (next == null || next.id != expectedId || next.filePath.isBlank() ||
-                    (next.kind.name == "IN" && !confirmedIn)) return@launch
-                val currentTimer = prefs.timerState.first()
-                val exported = repo.exportPhoto(next)
-                if (exported) {
-                    prefs.recordNext(System.currentTimeMillis())
-                    val settings = prefs.scheduleSettings.first()
-                    if (settings.timerEnabled && next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
-                        startTimerNow()
+                    val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
+                    if (next == null || next.id != expectedId || next.filePath.isBlank() ||
+                        (next.kind.name == "IN" && !confirmedIn)) return@withLock
+                    val currentTimer = prefs.timerState.first()
+                    saved = repo.exportPhoto(next)
+                    if (saved) {
+                        prefs.recordNext(System.currentTimeMillis())
+                        val settings = prefs.scheduleSettings.first()
+                        if (settings.timerEnabled && next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) startTimerNow()
                     }
                 }
-                // Keep the action locked briefly so a double-tap cannot export the following photo.
-                delay(700)
-                if (exported) {
-                    _exportHeadsUpEvents.emit(ExportHeadsUpEvent(next.tag, next.remark))
-                }
-                }
-            } finally {
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _exportProgress.value = null
                 isExportingNext.value = false
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("GhostShift", "Next export failed", e)
+            }
+            if (saved) {
+                _exportProgress.value = loading.copy(stage = ExportStage.Success)
+                try { delay(650) } finally {
+                    _exportProgress.value = null
+                    isExportingNext.value = false
+                }
+            } else {
+                _exportProgress.value = loading.copy(stage = ExportStage.Error)
             }
         }
     }

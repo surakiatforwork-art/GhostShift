@@ -34,6 +34,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 val timerState = prefs.timerState.first()
                 val currentSound = prefs.soundPref.first()
                 val scheduleSettings = prefs.scheduleSettings.first()
+                val themeMode = prefs.themeMode.first()
 
                 if (!scheduleSettings.timerEnabled || !timerState.running) {
                     Log.d("AlarmReceiver", "Timer not running, skipping reschedule")
@@ -53,7 +54,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     val showOverlay = AlertOverlayController.canShow(context)
                     NotificationHelper.showAlarmNotification(context, title, body, soundUri, silent = showOverlay)
                     if (showOverlay) {
-                    AlertOverlayController.show(context, nextTag, null, soundUri, repeatSound)
+                    AlertOverlayController.show(context, nextTag, null, soundUri, repeatSound, themeMode)
                     }
                 }
 

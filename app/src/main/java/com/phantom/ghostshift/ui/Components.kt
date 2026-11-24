@@ -65,7 +65,7 @@ private fun toneColors(tone: UtilityTone): Pair<Color, Color> {
 }
 
 @Composable
-private fun GlassControl(
+internal fun GlassControl(
     modifier: Modifier, tone: UtilityTone, enabled: Boolean, onClick: () -> Unit,
     content: @Composable BoxScope.(Color) -> Unit
 ) {

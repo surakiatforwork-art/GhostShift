@@ -23,36 +23,64 @@ object AlertOverlayController {
 
     fun canShow(context: Context): Boolean = Settings.canDrawOverlays(context)
 
-    fun show(context: Context, tag: String, remark: String?, soundUri: String?, repeatSound: Boolean) {
+    fun show(context: Context, tag: String, remark: String?, soundUri: String?, repeatSound: Boolean, themeMode: String = "system") {
         if (!canShow(context)) return
         dismiss(context)
         val appContext = context.applicationContext
+        val dark = when (themeMode) {
+            "dark" -> true
+            "light" -> false
+            else -> (appContext.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        }
+        val ink = if (dark) Color.rgb(234,240,247) else Color.rgb(25,37,48)
+        val muted = if (dark) Color.rgb(172,184,199) else Color.rgb(82,97,113)
+        val mint = if (dark) Color.rgb(36,84,71) else Color.rgb(158,233,203)
+        val mintInk = if (dark) Color.rgb(177,248,219) else Color.rgb(16,75,55)
         val panel = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(appContext, 22), dp(appContext, 18), dp(appContext, 22), dp(appContext, 18))
-            background = rounded(Color.rgb(244, 255, 250), dp(appContext, 26))
-            elevation = dp(appContext, 12).toFloat()
+            setPadding(dp(appContext, 18), dp(appContext, 16), dp(appContext, 18), dp(appContext, 14))
+            background = glass(if (dark) Color.rgb(32,39,48) else Color.rgb(250,251,252), dp(appContext, 14), dark)
+            elevation = dp(appContext, 6).toFloat()
             isClickable = true
-            setOnClickListener {
-                val wasVisible = MainActivity.isVisible
-                dismiss(appContext)
-                if (!wasVisible) {
-                    appContext.startActivity(Intent(appContext, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    })
-                }
-            }
         }
-        panel.addView(label(appContext, "👻  GhostShift", 20, Color.rgb(9, 68, 51), Typeface.BOLD))
-        panel.addView(label(appContext, "⏰", 54, Color.rgb(244, 91, 80), Typeface.NORMAL).apply {
-            setPadding(0, dp(appContext, 8), 0, 0)
-        })
-        panel.addView(label(appContext, "PHOTO READY", 24, Color.rgb(7, 62, 47), Typeface.BOLD))
-        panel.addView(label(appContext, tag + remark?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty(), 16, Color.rgb(38, 111, 88), Typeface.BOLD))
-        panel.addView(label(appContext, "แตะเพื่อเปิดแอปและหยุดเสียงแจ้งเตือน", 13, Color.rgb(83, 126, 113), Typeface.NORMAL).apply {
+        panel.addView(label(appContext, "GhostShift • ถึงเวลาแล้ว", 15, muted, Typeface.BOLD))
+        panel.addView(label(appContext, "PHOTO READY", 22, ink, Typeface.BOLD).apply {
             setPadding(0, dp(appContext, 12), 0, 0)
         })
+        panel.addView(label(appContext, tag + remark?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty(), 20, mintInk, Typeface.BOLD).apply {
+            setPadding(0, dp(appContext, 6), 0, dp(appContext, 14))
+        })
+        fun action(text: String, fill: Int, fg: Int, primary: Boolean, click: () -> Unit) {
+            val button = label(appContext, text, if (primary) 16 else 13, fg, Typeface.BOLD).apply {
+                background = glass(fill, dp(appContext, 9), dark)
+                minHeight = dp(appContext, 48)
+                setPadding(dp(appContext, 12), 0, dp(appContext, 12), 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { click() }
+                accessibilityDelegate = object : android.view.View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(host: android.view.View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                        super.onInitializeAccessibilityNodeInfo(host, info)
+                        info.className = "android.widget.Button"
+                    }
+                }
+            }
+            panel.addView(button, LinearLayout.LayoutParams(if (primary) LinearLayout.LayoutParams.MATCH_PARENT else LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(appContext, 8)
+                gravity = Gravity.CENTER
+            })
+        }
+        action("เปิด GhostShift", mint, mintInk, true) {
+            val wasVisible = MainActivity.isVisible
+            acknowledge(appContext)
+            if (!wasVisible) appContext.startActivity(Intent(appContext, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            })
+        }
+        action("รับทราบ / หยุดเสียง", if (dark) Color.rgb(52,63,75) else Color.rgb(232,237,242), ink, false) {
+            acknowledge(appContext)
+        }
 
         val params = WindowManager.LayoutParams(
             dp(appContext, 320), WindowManager.LayoutParams.WRAP_CONTENT,
@@ -74,6 +102,17 @@ object AlertOverlayController {
         windowManager = null
         runCatching { ringtone?.stop() }
         ringtone = null
+    }
+
+    private fun acknowledge(context: Context) {
+        dismiss(context)
+        context.getSystemService(android.app.NotificationManager::class.java)?.cancel(1001)
+    }
+
+    private fun glass(color: Int, radius: Int, dark: Boolean) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = radius.toFloat()
+        setStroke(1, if (dark) Color.rgb(82,97,109) else Color.WHITE)
     }
 
     private fun playSound(context: Context, soundUri: String?, repeatSound: Boolean) {
