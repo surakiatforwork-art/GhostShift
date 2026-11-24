@@ -56,6 +56,7 @@ data class MainUiState(
 
     // clock (UI countdown only)
     val currentTime: Long = System.currentTimeMillis(),
+    val lastNextAt: Long? = null,
 
     // Keeps the Next action single-flight so rapid taps cannot export two photos.
     val isExportingNext: Boolean = false
@@ -87,6 +88,7 @@ class MainViewModel(
     private val _now = MutableStateFlow(System.currentTimeMillis())
     private val isExportingNext = MutableStateFlow(false)
     private val importMutex = Mutex()
+    private val shiftMutex = Mutex()
     private val _exportHeadsUpEvents = MutableSharedFlow<ExportHeadsUpEvent>(extraBufferCapacity = 1)
     val exportHeadsUpEvents = _exportHeadsUpEvents.asSharedFlow()
 
@@ -103,17 +105,20 @@ class MainViewModel(
         prefs.timerState,
         prefs.alarmState,
         prefs.soundPref,
-        prefs.scheduleSettings
+        prefs.scheduleSettings,
+        prefs.lastNextAt
     ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
         val pending = args[0] as List<PhotoEntity>
         @Suppress("UNCHECKED_CAST")
         val downloaded = args[1] as List<PhotoEntity>
-        val timer = args[2] as TimerState
+        val storedTimer = args[2] as TimerState
         @Suppress("UNCHECKED_CAST")
         val alarmTriple = args[3] as Triple<Long?, String?, String?>
         val sound = args[4] as String?
         val settings = args[5] as ScheduleSettings
+        val timer = if (settings.timerEnabled) storedTimer else TimerState(false, false, null, null)
+        val lastNextAt = args[6] as Long?
 
         val all = (pending + downloaded).sortedBySlot()
 
@@ -152,7 +157,7 @@ class MainViewModel(
             timer = timer,
             schedule = schedule,
             nextSlotTag = nextSlot,
-            canStartTimer = !timer.running,
+            canStartTimer = settings.timerEnabled && !timer.running,
             isTimerLocked = false,
             alarmDueAt = storedDueAt,
             alarmTag = storedTag,
@@ -161,6 +166,7 @@ class MainViewModel(
             gateOpen = gateOpen,
             soundUri = sound,
             scheduleSettings = settings,
+            lastNextAt = lastNextAt,
             targetCoverageProgress = targetCoverage,
             currentTime = System.currentTimeMillis() // will be overridden by uiState combine with _now
         )
@@ -190,7 +196,7 @@ class MainViewModel(
                     // only the fields relevant to alarm scheduling
                     Triple(
                         // shouldSchedule?
-                        state.timer.running &&
+                        state.scheduleSettings.timerEnabled && state.timer.running &&
                             state.gateOpen &&
                             state.schedule.nextAt != null &&
                             state.schedule.nextTag != null,
@@ -219,7 +225,7 @@ class MainViewModel(
 
         // Strict: no alarm if not running OR gate not open (matches Web T1)
         val shouldHaveAlarm =
-            timer.running &&
+            state.scheduleSettings.timerEnabled && timer.running &&
             gateOpen &&  // Restored: Only schedule alarm if at least 1 photo is exported (Gate Open)
             schedule.nextAt != null &&
             schedule.nextTag != null
@@ -256,55 +262,45 @@ class MainViewModel(
     }
 
     fun startTimer910() {
-        viewModelScope.launch {
-            val now = System.currentTimeMillis()
-            val savedTimer = prefs.timerState.first()
-            val defaultTarget = now + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
-            val target = savedTimer.targetAt?.takeIf { it > now } ?: defaultTarget
+        viewModelScope.launch { startTimerNow() }
+    }
 
-            val newState = TimerState(
-                running = true,
-                locked = false,
-                startAt = now,
-                targetAt = target
-            )
-            prefs.saveTimerState(newState)
+    fun setTimerEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setTimerEnabled(enabled)
+            if (!enabled) {
+                alarmScheduler.stopTimerAlerts()
+                lastAlarmKey = null
+            }
         }
     }
 
-    fun setTargetTime(targetAt: Long) {
-        viewModelScope.launch {
-            val now = System.currentTimeMillis()
-            if (targetAt <= now) return@launch
-            val current = prefs.timerState.first()
-            prefs.saveTimerState(current.copy(targetAt = targetAt))
-        }
+    fun setTargetMinutes(minutes: Int) {
+        viewModelScope.launch { prefs.setTargetMinutes(minutes) }
+    }
+
+    fun setFinishTime(at: Long?) {
+        viewModelScope.launch { prefs.setFinishOverride(at) }
     }
 
     fun resetTimer() {
         viewModelScope.launch {
-            val newState = TimerState(
-                running = false,
-                locked = false,
-                startAt = null,
-                targetAt = null
-            )
-            prefs.saveTimerState(newState)
-            prefs.saveAlarmState(null, null)
-            alarmScheduler.cancel()
-            lastAlarmKey = null
+            shiftMutex.withLock {
+                prefs.resetShift()
+                alarmScheduler.stopTimerAlerts()
+                lastAlarmKey = null
+            }
         }
     }
 
     fun deleteAll() {
         viewModelScope.launch {
-            // deterministic order
-            repo.deleteAll()
-            val newState = TimerState(running = false, locked = false, startAt = null, targetAt = null)
-            prefs.saveTimerState(newState)
-            prefs.saveAlarmState(null, null)
-            alarmScheduler.cancel()
-            lastAlarmKey = null
+            shiftMutex.withLock {
+                importMutex.withLock { repo.deleteAll() }
+                prefs.resetShift(clearNext = true)
+                alarmScheduler.stopTimerAlerts()
+                lastAlarmKey = null
+            }
         }
     }
 
@@ -395,19 +391,24 @@ class MainViewModel(
         if (!isExportingNext.compareAndSet(expect = false, update = true)) return
         viewModelScope.launch {
             try {
+                shiftMutex.withLock {
                 val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
                 if (next == null || next.id != expectedId || next.filePath.isBlank() ||
                     (next.kind.name == "IN" && !confirmedIn)) return@launch
                 val currentTimer = prefs.timerState.first()
-                val settings = prefs.scheduleSettings.first()
                 val exported = repo.exportPhoto(next)
-                if (exported && next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
-                    startTimerNow()
+                if (exported) {
+                    prefs.recordNext(System.currentTimeMillis())
+                    val settings = prefs.scheduleSettings.first()
+                    if (settings.timerEnabled && next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) {
+                        startTimerNow()
+                    }
                 }
                 // Keep the action locked briefly so a double-tap cannot export the following photo.
                 delay(700)
                 if (exported) {
                     _exportHeadsUpEvents.emit(ExportHeadsUpEvent(next.tag, next.remark))
+                }
                 }
             } finally {
                 isExportingNext.value = false
@@ -428,8 +429,11 @@ class MainViewModel(
 
     private suspend fun startTimerNow() {
         val now = System.currentTimeMillis()
-        val saved = prefs.timerState.first()
-        val target = saved.targetAt?.takeIf { it > now } ?: now + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
+        val settings = prefs.scheduleSettings.first()
+        if (!settings.timerEnabled || prefs.timerState.first().running) return
+        val override = settings.finishOverrideAt?.takeIf { it > now }
+        if (settings.finishOverrideAt != null && override == null) prefs.setFinishOverride(null)
+        val target = override ?: (now + settings.targetMinutes * 60_000L)
         prefs.saveTimerState(TimerState(true, false, now, target))
     }
 

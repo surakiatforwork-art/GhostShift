@@ -6,6 +6,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.isSystemInDarkTheme
+import kotlinx.coroutines.launch
 import com.phantom.ghostshift.ui.SharedPhotoInput
 import com.phantom.ghostshift.ui.theme.GhostShiftTheme
 
@@ -20,7 +25,14 @@ class MainActivity : ComponentActivity() {
         val appContainer = (application as GhostShiftApp).container
         
         setContent {
-            GhostShiftTheme {
+            val themeMode by appContainer.userPreferences.themeMode.collectAsState(initial = "system")
+            val scope = rememberCoroutineScope()
+            val dark = when (themeMode) {
+                "dark" -> true
+                "light" -> false
+                else -> isSystemInDarkTheme()
+            }
+            GhostShiftTheme(darkTheme = dark) {
                 // Manual DI for ViewModel
                 val factory = com.phantom.ghostshift.ui.MainViewModelFactory(
                     repo = appContainer.photoRepository,
@@ -40,7 +52,7 @@ class MainActivity : ComponentActivity() {
                         initialShareHandled = true
                     }
                 }
-                com.phantom.ghostshift.ui.MainScreen(viewModel)
+                com.phantom.ghostshift.ui.MainScreen(viewModel, themeMode = themeMode, onThemeModeChanged = { mode -> scope.launch { appContainer.userPreferences.setThemeMode(mode) } })
             }
         }
     }

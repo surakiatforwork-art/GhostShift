@@ -90,6 +90,12 @@ class AlarmScheduler(private val context: Context) {
         NotificationHelper.cancelOngoingNotification(context)
     }
 
+    fun stopTimerAlerts() {
+        cancel()
+        androidx.core.app.NotificationManagerCompat.from(context).cancel(1001)
+        AlertOverlayController.dismiss(context)
+    }
+
     companion object {
         const val REQUEST_CODE = 777
     }

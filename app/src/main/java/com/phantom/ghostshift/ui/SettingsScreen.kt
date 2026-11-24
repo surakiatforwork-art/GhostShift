@@ -42,7 +42,11 @@ import java.util.Locale
 fun SettingsScreen(
     state: MainUiState,
     onSoundSelected: (String?) -> Unit,
-    onTargetTimeSelected: (Long) -> Unit,
+    themeMode: String = "system",
+    onThemeModeChanged: (String) -> Unit = {},
+    onTargetMinutesSelected: (Int) -> Unit,
+    onFinishTimeSelected: (Long?) -> Unit,
+    onTimerEnabledChanged: (Boolean) -> Unit,
     onScheduleSettingsChanged: (ScheduleSettings) -> Unit,
     onResetTimer: () -> Unit,
     onBack: () -> Unit
@@ -50,7 +54,22 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     val currentSoundUri = state.soundUri
-    val currentTargetAt = state.timer.targetAt
+    var targetStep by remember { mutableStateOf(0) }
+    var hours by remember { mutableStateOf("") }
+    var minutes by remember { mutableStateOf("") }
+    var proposed by remember { mutableStateOf(0) }
+    var savedTarget by remember { mutableStateOf(0) }
+    fun durationText(total: Int) = "${total / 60} ชั่วโมง ${total % 60} นาที"
+    fun finishText(total: Int): String {
+        val end = 8 * 60 + total
+        val time = String.format(Locale.US, "%02d:%02d", (end / 60) % 24, end % 60)
+        return time + if (end >= 1440) " (วันถัดไป)" else ""
+    }
+    fun confirmTarget(extra: Int) {
+        savedTarget = proposed + extra
+        onTargetMinutesSelected(savedTarget)
+        targetStep = 3
+    }
     var showResetTimerConfirmation by remember { mutableStateOf(false) }
     var inOutMin by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.inOutMinMinutes.toString()) }
     var inOutMax by remember(state.scheduleSettings) { mutableStateOf(state.scheduleSettings.inOutMaxMinutes?.toString().orEmpty()) }
@@ -76,49 +95,37 @@ fun SettingsScreen(
             )
         )
     }
-    val targetSummary = if (currentTargetAt != null) {
-        formatTargetDateTime(currentTargetAt)
-    } else {
-        "ยังไม่ได้ตั้งค่า (จะใช้ค่าเริ่มต้น +9ชม.10นาที)"
+    val targetSummary = durationText(state.scheduleSettings.targetMinutes)
+    fun openTargetPicker() {
+        hours = (state.scheduleSettings.targetMinutes / 60).toString()
+        minutes = (state.scheduleSettings.targetMinutes % 60).toString()
+        targetStep = 1
     }
 
-    fun openTargetPicker() {
+    val fixedFinish = state.scheduleSettings.finishOverrideAt
+    fun openFinishPicker() {
         val now = System.currentTimeMillis()
-        val initialMillis = currentTargetAt?.takeIf { it > now } ?: (now + (9 * 3600 * 1000L) + (10 * 60 * 1000L))
-        val initial = Calendar.getInstance().apply { timeInMillis = initialMillis }
-
-        DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                TimePickerDialog(
-                    context,
-                    { _, hourOfDay, minute ->
-                        val picked = Calendar.getInstance().apply {
-                            set(Calendar.YEAR, year)
-                            set(Calendar.MONTH, month)
-                            set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                            set(Calendar.HOUR_OF_DAY, hourOfDay)
-                            set(Calendar.MINUTE, minute)
-                            set(Calendar.SECOND, 0)
-                            set(Calendar.MILLISECOND, 0)
-                        }
-                        val targetAt = picked.timeInMillis
-                        if (targetAt <= System.currentTimeMillis()) {
-                            Toast.makeText(context, "Target time ต้องมากกว่าเวลาปัจจุบัน", Toast.LENGTH_SHORT).show()
-                            return@TimePickerDialog
-                        }
-                        onTargetTimeSelected(targetAt)
-                        Toast.makeText(context, "บันทึก Target time แล้ว", Toast.LENGTH_SHORT).show()
-                    },
-                    initial.get(Calendar.HOUR_OF_DAY),
-                    initial.get(Calendar.MINUTE),
-                    true
-                ).show()
-            },
-            initial.get(Calendar.YEAR),
-            initial.get(Calendar.MONTH),
-            initial.get(Calendar.DAY_OF_MONTH)
-        ).show()
+        val initial = Calendar.getInstance().apply {
+            timeInMillis = fixedFinish?.takeIf { it > now }
+                ?: state.timer.targetAt?.takeIf { it > now }
+                ?: (now + state.scheduleSettings.targetMinutes * 60_000L)
+        }
+        DatePickerDialog(context, { _, year, month, day ->
+            TimePickerDialog(context, { _, hour, minute ->
+                val selected = Calendar.getInstance().apply {
+                    set(year, month, day, hour, minute, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                if (selected <= System.currentTimeMillis()) {
+                    Toast.makeText(context, "เวลาเลิกงานต้องมากกว่าเวลาปัจจุบัน", Toast.LENGTH_SHORT).show()
+                } else {
+                    onFinishTimeSelected(selected)
+                    Toast.makeText(context, "บันทึกเวลาเลิกงานแล้ว", Toast.LENGTH_SHORT).show()
+                }
+            }, initial.get(Calendar.HOUR_OF_DAY), initial.get(Calendar.MINUTE), true).show()
+        }, initial.get(Calendar.YEAR), initial.get(Calendar.MONTH), initial.get(Calendar.DAY_OF_MONTH)).apply {
+            datePicker.minDate = now
+        }.show()
     }
 
     // Sound Picker
@@ -153,11 +160,38 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            MintCard {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("ธีมแอป", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("เลือกรูปแบบการแสดงผล", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("system" to "ตามอุปกรณ์", "dark" to "มืด", "light" to "สว่าง").forEach { (mode, label) ->
+                            FilterChip(
+                                selected = themeMode == mode,
+                                onClick = { onThemeModeChanged(mode) },
+                                label = { Text(label, maxLines = 1) },
+                                modifier = Modifier.weight(1f),
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MintSoft, selectedLabelColor = MintOkText)
+                            )
+                        }
+                    }
+                }
+            }
+            MintCard {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("ระบบจับเวลาและแจ้งเตือน", style = MaterialTheme.typography.titleMedium, color = MintText)
+                        Text("เปิดเพื่อกำหนดระยะเวลาทำงานและรับแจ้งเตือน", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    }
+                    Switch(checked = state.scheduleSettings.timerEnabled, onCheckedChange = onTimerEnabledChanged)
+                }
+            }
+            if (state.scheduleSettings.timerEnabled) {
             // Target Time Section
             MintCard {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Target Time",
+                        "ระยะเวลาทำงาน (Target)",
                         style = MaterialTheme.typography.titleMedium,
                         color = MintText,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
@@ -168,7 +202,9 @@ fun SettingsScreen(
                         color = MintText
                     )
                     Text(
-                        if (state.timer.running) {
+                        if (fixedFinish != null) {
+                            "ค่าเริ่มต้นสำหรับวันที่ไม่ได้กำหนดเวลาเลิกงานเอง"
+                        } else if (state.timer.running) {
                             "Timer กำลังทำงาน: เปลี่ยนค่าแล้วตารางแจ้งเตือนจะอัปเดตทันที"
                         } else {
                             "Timer ยังไม่เริ่ม: ค่านี้จะถูกใช้ตอนกด Start ครั้งถัดไป"
@@ -189,6 +225,26 @@ fun SettingsScreen(
                             Icon(Icons.Default.RestartAlt, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("รีเซ็ต")
+                        }
+                    }
+                }
+            }
+
+            MintCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("เวลาเลิกงาน", style = MaterialTheme.typography.titleMedium, color = MintText, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(fixedFinish?.let { formatTargetDateTime(it) + if (it <= state.currentTime) " (ผ่านแล้ว)" else "" }
+                        ?: state.timer.targetAt?.let { formatTargetDateTime(it) + " (ตาม Target)" }
+                        ?: "ยังไม่ได้กำหนดเวลาเลิกงานเอง", style = MaterialTheme.typography.bodyLarge, color = MintText)
+                    Text("กำหนดวันและเวลาเลิกงานสำหรับรอบนี้โดยตรง โดยไม่เปลี่ยนระยะเวลา Target เริ่มต้น", style = MaterialTheme.typography.bodySmall, color = MintMuted)
+                    Button(onClick = { openFinishPicker() }, colors = ButtonDefaults.buttonColors(containerColor = MintAccent), modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Schedule, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("ตั้งเวลาเลิกงาน")
+                    }
+                    if (fixedFinish != null) {
+                        OutlinedButton(onClick = { onFinishTimeSelected(null) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("กลับไปใช้ระยะเวลา Target")
                         }
                     }
                 }
@@ -346,15 +402,61 @@ fun SettingsScreen(
                     DebugRow("Scheduled Tag", state.alarmTag ?: "-")
                  }
             }
+            }
         }
     }
 
-    if (showResetTimerConfirmation) {
+    if (state.scheduleSettings.timerEnabled && targetStep == 1) {
+        val h = hours.toIntOrNull()
+        val m = minutes.toIntOrNull()
+        val valid = h != null && m != null && h in 0..24 && m in 0..59 && h * 60 + m > 0
+        AlertDialog(
+            onDismissRequest = { targetStep = 0 },
+            title = { Text("กำหนดระยะเวลาทำงาน") },
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(hours, { hours = it.filter(Char::isDigit).take(2) }, label = { Text("ชั่วโมง") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                    OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit).take(2) }, label = { Text("นาที") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                }
+            },
+            confirmButton = { Button(enabled = valid, onClick = { proposed = h!! * 60 + m!!; targetStep = 2 }) { Text("ดำเนินการต่อ") } },
+            dismissButton = { TextButton(onClick = { targetStep = 0 }) { Text("ยกเลิก") } }
+        )
+    }
+    if (state.scheduleSettings.timerEnabled && targetStep == 2) {
+        AlertDialog(
+            onDismissRequest = { targetStep = 0 },
+            title = { Text("แนะนำให้เผื่อเวลาอีก 10 นาที") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("ระยะเวลาที่เลือก: " + durationText(proposed))
+                    Text("แนะนำให้เผื่อเวลาสำหรับขั้นตอนนำภาพไปใช้งาน")
+                    Text("เมื่อเพิ่มเวลา: " + durationText(proposed + 10))
+                }
+            },
+            confirmButton = {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(onClick = { confirmTarget(10) }, modifier = Modifier.fillMaxWidth()) { Text("ยืนยัน เพิ่ม 10 นาที") }
+                    OutlinedButton(onClick = { confirmTarget(0) }, modifier = Modifier.fillMaxWidth()) { Text("ยืนยัน ไม่เพิ่มเวลา 10 นาที") }
+                    TextButton(onClick = { targetStep = 0 }, modifier = Modifier.fillMaxWidth()) { Text("ยกเลิก") }
+                }
+            }
+        )
+    }
+    if (state.scheduleSettings.timerEnabled && targetStep == 3) {
+        AlertDialog(
+            onDismissRequest = { targetStep = 0 },
+            title = { Text("ตั้งค่าเวลาทำงานระหว่างวันสำเร็จ") },
+            text = { Text(durationText(savedTarget) + "\n\nตัวอย่าง: หากเริ่มงานหรือเริ่มนับเวลา 08:00 น. คุณจะเลิกงานเวลา " + finishText(savedTarget) + " น.") },
+            confirmButton = { Button(onClick = { targetStep = 0 }) { Text("เรียบร้อย") } }
+        )
+    }
+    if (state.scheduleSettings.timerEnabled && showResetTimerConfirmation) {
         AlertDialog(
             onDismissRequest = { showResetTimerConfirmation = false },
             title = { Text("รีเซ็ตเวลา?") },
             text = {
-                Text("การรีเซ็ตจะยกเลิกเวลา Target และตารางเวลาการดาวน์โหลดที่กำลังใช้งานอยู่")
+                Text("การรีเซ็ตจะหยุดจับเวลา ยกเลิกเวลาเลิกงานที่กำหนดเองและตารางแจ้งเตือน โดยยังเก็บระยะเวลา Target เริ่มต้นไว้")
             },
             confirmButton = {
                 TextButton(

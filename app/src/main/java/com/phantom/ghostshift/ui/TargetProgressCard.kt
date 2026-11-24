@@ -42,6 +42,7 @@ import java.util.Locale
 
 @Composable
 fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Modifier) {
+    val trackColor = MintLine
     Column(
         modifier = modifier.width(72.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -49,9 +50,9 @@ fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Mo
         Box(
             modifier = Modifier
                 .size(68.dp)
-                .shadow(9.dp, CircleShape, spotColor = MintClayShadow)
+                .shadow(2.dp, CircleShape, spotColor = MintClayShadow)
                 .clip(CircleShape)
-                .background(Brush.verticalGradient(listOf(MintClayHighlight, MintCardBg, MintSoft)))
+                .background(Brush.verticalGradient(listOf(MintCardBg, MintSoft)))
                 .border(1.dp, MintClayHighlight, CircleShape),
             contentAlignment = Alignment.Center
         ) {
@@ -61,7 +62,7 @@ fun TargetProgressCard(targetAt: Long?, progress: Float, modifier: Modifier = Mo
                 // Keep the canvas inset so the thick stroke is never clipped by its bounds.
                 Canvas(Modifier.size(60.dp)) {
                     val stroke = Stroke(width = 8.dp.toPx())
-                    drawArc(MintLine, -90f, 360f, false, style = stroke)
+                    drawArc(trackColor, -90f, 360f, false, style = stroke)
                     drawArc(Color(0xFF24B883), -90f, 360f * progress, false, style = stroke)
                 }
                 Text(formatTime(targetAt), color = MintText, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
@@ -98,6 +99,7 @@ fun NextCountdownCard(
     }
     val ringColor = lerp(MintAccent, MintDanger, elapsedProgress).copy(alpha = dueAlpha)
 
+    val trackColor = MintLine
     Column(
         modifier = modifier.width(72.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -105,15 +107,15 @@ fun NextCountdownCard(
         Box(
             modifier = Modifier
                 .size(68.dp)
-                .shadow(9.dp, CircleShape, spotColor = MintClayShadow)
+                .shadow(2.dp, CircleShape, spotColor = MintClayShadow)
                 .clip(CircleShape)
-                .background(Brush.verticalGradient(listOf(MintClayHighlight, MintCardBg, MintSoft)))
+                .background(Brush.verticalGradient(listOf(MintCardBg, MintSoft)))
                 .border(1.dp, MintClayHighlight, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Canvas(Modifier.size(60.dp)) {
                 val stroke = Stroke(width = 8.dp.toPx())
-                drawArc(MintLine, -90f, 360f, false, style = stroke)
+                drawArc(trackColor, -90f, 360f, false, style = stroke)
                 if (nextAt != null) {
                     drawArc(ringColor, -90f, if (isDue) 360f else 360f * elapsedProgress, false, style = stroke)
                 }

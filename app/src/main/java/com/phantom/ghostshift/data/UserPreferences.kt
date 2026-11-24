@@ -18,6 +18,11 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "us
 
 class UserPreferences(private val dataStore: DataStore<Preferences>) {
     private object Keys {
+        val TIMER_ENABLED = booleanPreferencesKey("timer_enabled")
+        val TARGET_MINUTES = intPreferencesKey("target_minutes")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
+        val FINISH_OVERRIDE_AT = longPreferencesKey("finish_override_at")
+        val LAST_NEXT_AT = longPreferencesKey("last_next_at")
         val TIMER_RUNNING = booleanPreferencesKey("timer_running")
         val TIMER_LOCKED = booleanPreferencesKey("timer_locked")
         val TIMER_START_AT = longPreferencesKey("timer_start_at")
@@ -37,6 +42,47 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val OUT_IN_MAX = intPreferencesKey("out_in_max_minutes")
         val AUTO_START_FIRST_DOWNLOAD = booleanPreferencesKey("auto_start_first_download")
         val REPEAT_ALARM_SOUND = booleanPreferencesKey("repeat_alarm_sound")
+    }
+
+    val themeMode: Flow<String> = dataStore.data.map { it[Keys.THEME_MODE]?.takeIf { mode -> mode in setOf("system", "dark", "light") } ?: "system" }
+
+    suspend fun setThemeMode(mode: String) {
+        require(mode in setOf("system", "dark", "light"))
+        dataStore.edit { it[Keys.THEME_MODE] = mode }
+    }
+
+    val lastNextAt: Flow<Long?> = dataStore.data.map { it[Keys.LAST_NEXT_AT] }
+
+    suspend fun recordNext(at: Long) { dataStore.edit { it[Keys.LAST_NEXT_AT] = at } }
+    suspend fun clearLastNext() { dataStore.edit { it.remove(Keys.LAST_NEXT_AT) } }
+
+    // The fixed finish is for the current shift only; it never changes the default duration.
+    suspend fun setFinishOverride(at: Long?) {
+        dataStore.edit { prefs ->
+            if (at != null && at <= System.currentTimeMillis()) return@edit
+            if (at == null) prefs.remove(Keys.FINISH_OVERRIDE_AT) else prefs[Keys.FINISH_OVERRIDE_AT] = at
+            val start = prefs[Keys.TIMER_START_AT]
+            if (prefs[Keys.TIMER_ENABLED] == true && prefs[Keys.TIMER_RUNNING] == true && start != null) {
+                prefs[Keys.TIMER_TARGET_AT] = at ?: (start + (prefs[Keys.TARGET_MINUTES] ?: 550) * 60_000L)
+            } else if (at == null) {
+                prefs.remove(Keys.TIMER_TARGET_AT)
+            } else {
+                prefs[Keys.TIMER_TARGET_AT] = at
+            }
+        }
+    }
+
+    suspend fun resetShift(clearNext: Boolean = false) {
+        dataStore.edit { prefs ->
+            prefs[Keys.TIMER_RUNNING] = false
+            prefs[Keys.TIMER_LOCKED] = false
+            prefs.remove(Keys.TIMER_START_AT)
+            prefs.remove(Keys.TIMER_TARGET_AT)
+            prefs.remove(Keys.FINISH_OVERRIDE_AT)
+            prefs.remove(Keys.ALARM_DUE_AT)
+            prefs.remove(Keys.ALARM_NEXT_TAG)
+            if (clearNext) prefs.remove(Keys.LAST_NEXT_AT)
+        }
     }
 
     val timerState: Flow<TimerState> = dataStore.data.map { prefs ->
@@ -64,14 +110,45 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
             inOutMaxMinutes = prefs[Keys.IN_OUT_MAX]?.takeIf { it > 0 } ?: if (prefs.contains(Keys.IN_OUT_MAX)) null else 25,
             outInMinMinutes = prefs[Keys.OUT_IN_MIN] ?: 4,
             outInMaxMinutes = prefs[Keys.OUT_IN_MAX]?.takeIf { it > 0 } ?: if (prefs.contains(Keys.OUT_IN_MAX)) null else 30,
-            autoStartOnFirstDownload = prefs[Keys.AUTO_START_FIRST_DOWNLOAD] ?: false,
+            autoStartOnFirstDownload = prefs[Keys.AUTO_START_FIRST_DOWNLOAD] ?: true,
             // Existing installations default to one play, preventing an unexpected endless alarm.
-            repeatAlarmSound = prefs[Keys.REPEAT_ALARM_SOUND] ?: false
+            repeatAlarmSound = prefs[Keys.REPEAT_ALARM_SOUND] ?: false,
+            timerEnabled = prefs[Keys.TIMER_ENABLED] ?: false,
+            targetMinutes = prefs[Keys.TARGET_MINUTES] ?: 550,
+            finishOverrideAt = prefs[Keys.FINISH_OVERRIDE_AT]
         ).normalized()
+    }
+
+    suspend fun setTimerEnabled(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            val wasEnabled = prefs[Keys.TIMER_ENABLED] == true
+            prefs[Keys.TIMER_ENABLED] = enabled
+            if (!enabled || !wasEnabled) {
+                prefs[Keys.TIMER_RUNNING] = false
+                prefs[Keys.TIMER_LOCKED] = false
+                prefs.remove(Keys.TIMER_START_AT)
+                prefs.remove(Keys.TIMER_TARGET_AT)
+                prefs.remove(Keys.ALARM_DUE_AT)
+                prefs.remove(Keys.ALARM_NEXT_TAG)
+            }
+        }
+    }
+
+    suspend fun setTargetMinutes(minutes: Int) {
+        dataStore.edit { prefs ->
+            prefs[Keys.TARGET_MINUTES] = minutes
+            val start = prefs[Keys.TIMER_START_AT]
+            if (prefs[Keys.TIMER_ENABLED] == true && prefs[Keys.TIMER_RUNNING] == true && start != null) {
+                if (prefs[Keys.FINISH_OVERRIDE_AT] == null) {
+                    prefs[Keys.TIMER_TARGET_AT] = start + minutes * 60_000L
+                }
+            }
+        }
     }
 
     suspend fun saveTimerState(state: TimerState) {
         dataStore.edit { prefs ->
+            if (state.running && prefs[Keys.TIMER_ENABLED] != true) return@edit
             prefs[Keys.TIMER_RUNNING] = state.running
             prefs[Keys.TIMER_LOCKED] = state.locked
             if (state.startAt != null) prefs[Keys.TIMER_START_AT] = state.startAt else prefs.remove(Keys.TIMER_START_AT)
@@ -81,6 +158,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
 
     suspend fun saveAlarmState(dueAt: Long?, nextTag: String?) {
         dataStore.edit { prefs ->
+            if (dueAt != null && prefs[Keys.TIMER_ENABLED] != true) return@edit
             if (dueAt != null) prefs[Keys.ALARM_DUE_AT] = dueAt else prefs.remove(Keys.ALARM_DUE_AT)
             if (nextTag != null) prefs[Keys.ALARM_NEXT_TAG] = nextTag else prefs.remove(Keys.ALARM_NEXT_TAG)
         }

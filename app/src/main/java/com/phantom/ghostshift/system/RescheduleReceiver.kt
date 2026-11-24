@@ -28,7 +28,9 @@ class RescheduleReceiver : BroadcastReceiver() {
                 val scheduler = AlarmScheduler(context)
                 
                 val (dueAt, nextTag, soundUri) = prefs.alarmState.first()
-                val repeatSound = prefs.scheduleSettings.first().repeatAlarmSound
+                val settings = prefs.scheduleSettings.first()
+                if (!settings.timerEnabled || !prefs.timerState.first().running) { scheduler.cancel(); return@launch }
+                val repeatSound = settings.repeatAlarmSound
                 // Use stored soundUri or null if not set
                 
                 if (dueAt != null && nextTag != null && dueAt > System.currentTimeMillis()) {

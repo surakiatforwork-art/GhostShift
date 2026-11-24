@@ -13,21 +13,6 @@ class AlarmReceiver : BroadcastReceiver() {
         val soundUri = intent.getStringExtra("EXTRA_SOUND_URI")
         val repeatSound = intent.getBooleanExtra("EXTRA_REPEAT_SOUND", false)
 
-        Log.d("AlarmReceiver", "Alarm Fired! Tag=$nextTag")
-
-        // 1. Show Notification
-        val title = if (nextTag.startsWith("OUT", ignoreCase = true)) {
-            "ครบเวลา Check Out ได้แล้ว"
-        } else {
-            "ครบเวลา Check In ได้แล้ว"
-        }
-        val body = "Next: $nextTag"
-        val showOverlay = AlertOverlayController.canShow(context)
-        NotificationHelper.showAlarmNotification(context, title, body, soundUri, silent = showOverlay)
-        if (showOverlay) {
-            AlertOverlayController.show(context, nextTag, null, soundUri, repeatSound)
-        }
-        
         // 2. Headless Reschedule (Strict Rule A1)
         // Must run in background scope
         val goAsync = goAsync()
@@ -50,11 +35,28 @@ class AlarmReceiver : BroadcastReceiver() {
                 val currentSound = prefs.soundPref.first()
                 val scheduleSettings = prefs.scheduleSettings.first()
 
-                if (!timerState.running) {
+                if (!scheduleSettings.timerEnabled || !timerState.running) {
                     Log.d("AlarmReceiver", "Timer not running, skipping reschedule")
                     return@launch
                 }
                 
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    Log.d("AlarmReceiver", "Alarm Fired! Tag=$nextTag")
+                    
+                    // 1. Show Notification
+                    val title = if (nextTag.startsWith("OUT", ignoreCase = true)) {
+                    "ครบเวลา Check Out ได้แล้ว"
+                    } else {
+                    "ครบเวลา Check In ได้แล้ว"
+                    }
+                    val body = "Next: $nextTag"
+                    val showOverlay = AlertOverlayController.canShow(context)
+                    NotificationHelper.showAlarmNotification(context, title, body, soundUri, silent = showOverlay)
+                    if (showOverlay) {
+                    AlertOverlayController.show(context, nextTag, null, soundUri, repeatSound)
+                    }
+                }
+
                 // Re-run Schedule Calculation
                 // Need to convert to SchedulePhoto for domain
                 // We must sort same way as VM

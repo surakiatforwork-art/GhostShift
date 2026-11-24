@@ -19,6 +19,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,8 +74,9 @@ private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outP
         inPhoto?.downloadedAt == null && outPhoto?.downloadedAt == null
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel = viewModel()) {
+fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "system", onThemeModeChanged: (String) -> Unit = {}) {
     val state by viewModel.uiState.collectAsState()
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
     var reservePair by remember { mutableStateOf(false) }
@@ -124,20 +129,78 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
     var exportHeadsUp by remember { mutableStateOf<ExportHeadsUpEvent?>(null) }
     val listState = rememberLazyListState()
-    val latestReorderPairs by rememberUpdatedState(reorderPairs)
+    val haptic = LocalHapticFeedback.current
+    val edgePx = with(LocalDensity.current) { 80.dp.toPx() }
+    var dragCenter by remember { mutableFloatStateOf(0f) }
+    var committingOrder by remember { mutableStateOf(false) }
+    var originalOrder by remember { mutableStateOf<List<Long>>(emptyList()) }
 
-    val allPairs = (state.pendingPhotos + state.downloadedPhotos)
+    val allPairs = remember(state.pendingPhotos, state.downloadedPhotos) { (state.pendingPhotos + state.downloadedPhotos)
         .groupBy { it.idx }
         .toSortedMap()
         .map { (index, photos) ->
             PhotoPair(index, photos.firstOrNull { it.kind.name == "IN" }, photos.firstOrNull { it.kind.name == "OUT" })
         }
-    val pendingPairs = allPairs.filterNot { it.fullyDownloaded }
-    val downloadedPairs = allPairs.filter { it.fullyDownloaded }
+    }
+    val pendingPairs = remember(allPairs) { allPairs.filterNot { it.fullyDownloaded } }
+    val downloadedPairs = remember(allPairs) { allPairs.filter { it.fullyDownloaded } }
     val visiblePendingPairs = if (reorderMode) reorderPairs else pendingPairs
 
-    LaunchedEffect(pendingPairs, reorderMode) {
-        if (!reorderMode) reorderPairs = pendingPairs
+    val latestPending by rememberUpdatedState(pendingPairs)
+    fun resetDrag() {
+        draggedPairId = null
+        draggedOffsetY = 0f
+        reorderMode = false
+        committingOrder = false
+    }
+    LaunchedEffect(pendingPairs, committingOrder) {
+        if (committingOrder && pendingPairs.filter { it.isReorderable }.map { it.stableId } ==
+            reorderPairs.filter { it.isReorderable }.map { it.stableId }) resetDrag()
+        if (reorderMode && pendingPairs.map { it.stableId }.toSet() != reorderPairs.map { it.stableId }.toSet()) resetDrag()
+    }
+    LaunchedEffect(committingOrder) {
+        if (committingOrder) { delay(2000); resetDrag() }
+    }
+    fun moveDragged() {
+        val id = draggedPairId ?: return
+        val info = listState.layoutInfo.visibleItemsInfo
+        val dragged = info.firstOrNull { it.key == "pending-$id" } ?: return
+        draggedOffsetY = dragCenter - dragged.offset - dragged.size / 2f
+        val from = reorderPairs.indexOfFirst { it.stableId == id }
+        val target = info.firstOrNull { item ->
+            val targetId = (item.key as? String)?.removePrefix("pending-")?.toLongOrNull()
+            val to = reorderPairs.indexOfFirst { it.stableId == targetId && it.isReorderable }
+            item.key != dragged.key && to >= 0 && from >= 0 &&
+                if (to > from) dragCenter >= item.offset + item.size / 2f && dragCenter <= item.offset + item.size
+                else dragCenter <= item.offset + item.size / 2f && dragCenter >= item.offset
+        } ?: return
+        val to = reorderPairs.indexOfFirst { "pending-${it.stableId}" == target.key }
+        if (from != to && from >= 0 && to >= 0) {
+            // Preserve the slots of incomplete/exported pairs.
+            val eligible = reorderPairs.filter { it.isReorderable }.toMutableList()
+            val f = eligible.indexOfFirst { it.stableId == id }
+            val t = eligible.indexOfFirst { "pending-${it.stableId}" == target.key }
+            if (f < 0 || t < 0) return
+            eligible.add(t, eligible.removeAt(f))
+            val iterator = eligible.iterator()
+            reorderPairs = reorderPairs.map { if (it.isReorderable) iterator.next() else it }
+            draggedOffsetY = dragCenter - target.offset - dragged.size / 2f
+        }
+    }
+    LaunchedEffect(draggedPairId) {
+        while (draggedPairId != null) {
+            withFrameNanos { }
+            val layout = listState.layoutInfo
+            val speed = when {
+                dragCenter < layout.viewportStartOffset + edgePx ->
+                    -((layout.viewportStartOffset + edgePx - dragCenter) / edgePx).coerceIn(0f, 1f) * edgePx / 6f
+                dragCenter > layout.viewportEndOffset - edgePx ->
+                    ((dragCenter - layout.viewportEndOffset + edgePx) / edgePx).coerceIn(0f, 1f) * edgePx / 6f
+                else -> 0f
+            }
+            if (speed != 0f) listState.scrollBy(speed)
+            moveDragged()
+        }
     }
 
     LaunchedEffect(viewModel) {
@@ -236,7 +299,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         SettingsScreen(
             state = state,
             onSoundSelected = { uri -> viewModel.setSound(uri) },
-            onTargetTimeSelected = { targetAt -> viewModel.setTargetTime(targetAt) },
+            themeMode = themeMode,
+            onThemeModeChanged = onThemeModeChanged,
+            onTargetMinutesSelected = { viewModel.setTargetMinutes(it) },
+            onFinishTimeSelected = { viewModel.setFinishTime(it) },
+            onTimerEnabledChanged = { viewModel.setTimerEnabled(it) },
             onScheduleSettingsChanged = { settings -> viewModel.saveScheduleSettings(settings) },
             onResetTimer = { viewModel.resetTimer() },
             onBack = { showSettings = false }
@@ -348,9 +415,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 onSettings = { showSettings = true }
             )
         },
+        floatingActionButton = {
+            ClayIconButton(onClick = { pairRemark = ""; reservePair = true }, icon = Icons.Default.Add,
+                contentDescription = "เพิ่มคู่ภาพเปล่า", modifier = Modifier.size(52.dp), tone = UtilityTone.Aqua)
+        },
         bottomBar = {
             Column {
-            TextButton(onClick = { pairRemark = ""; reservePair = true }) { Text("+ เพิ่มคู่ภาพเปล่า") }
             StickyBottomBar(
                 state = state,
                 onStart = {
@@ -383,97 +453,69 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         ) {
             item {
                 SectionHeaderCard(
-                    title = "",
+                    title = "Pending",
                     count = pendingPairs.size,
-                    hint = "",
-                    actionText = if (reorderMode) "เสร็จสิ้น" else "จัดเรียง",
-                    compactActionOnly = true,
-                    onAction = {
-                        if (reorderMode) {
-                            viewModel.reorderCompletePendingPairs(
-                                reorderPairs.filter { it.isReorderable }.map { it.stableId }
-                            )
-                            reorderMode = false
-                            draggedPairId = null
-                        } else {
-                            reorderPairs = pendingPairs
-                            reorderMode = true
-                        }
-                    }
+                    hint = "กดค้างแล้วลากเพื่อจัดเรียง"
                 )
             }
 
             items(visiblePendingPairs, key = { "pending-${it.stableId}" }) { pair ->
                 val isDragged = draggedPairId == pair.stableId
-                val reorderModifier = if (reorderMode && pair.isReorderable) {
-                    Modifier
-                        .zIndex(if (isDragged) 1f else 0f)
-                        .graphicsLayer { translationY = if (isDragged) draggedOffsetY else 0f }
-                        .pointerInput(pair.stableId) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    draggedPairId = pair.stableId
-                                    draggedOffsetY = 0f
-                                },
-                                onDragEnd = {
-                                    draggedPairId = null
-                                    draggedOffsetY = 0f
-                                },
-                                onDragCancel = {
-                                    draggedPairId = null
-                                    draggedOffsetY = 0f
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    draggedOffsetY += dragAmount.y
-                                    val draggedInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                                        it.key == "pending-${pair.stableId}"
-                                    } ?: return@detectDragGesturesAfterLongPress
-                                    val draggedCenter = draggedInfo.offset + draggedOffsetY + draggedInfo.size / 2
-                                    // Continue scrolling at the edge so every pending pair is reachable.
-                                    val scrollBy = when {
-                                        draggedCenter < listState.layoutInfo.viewportStartOffset + 72 -> -28f
-                                        draggedCenter > listState.layoutInfo.viewportEndOffset - 72 -> 28f
-                                        else -> 0f
-                                    }
-                                    if (scrollBy != 0f) {
-                                        scope.launch { listState.scrollBy(scrollBy) }
-                                    }
-                                    val targetInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
-                                        val key = item.key as? String
-                                        key?.startsWith("pending-") == true &&
-                                            item.key != draggedInfo.key &&
-                                            latestReorderPairs.firstOrNull { it.stableId == key.removePrefix("pending-").toLongOrNull() }?.isReorderable == true &&
-                                            draggedCenter >= item.offset &&
-                                            draggedCenter <= item.offset + item.size
-                                    } ?: return@detectDragGesturesAfterLongPress
-                                    val targetId = (targetInfo.key as? String)
-                                        ?.removePrefix("pending-")
-                                        ?.toLongOrNull()
-                                        ?: return@detectDragGesturesAfterLongPress
-                                    val from = latestReorderPairs.indexOfFirst { it.stableId == pair.stableId }
-                                    val to = latestReorderPairs.indexOfFirst { it.stableId == targetId }
-                                    if (from >= 0 && to >= 0 && from != to) {
-                                        reorderPairs = latestReorderPairs.toMutableList().apply {
-                                            add(to, removeAt(from))
-                                        }
-                                        draggedOffsetY += draggedInfo.offset - targetInfo.offset
+                val reorderModifier = Modifier
+                    .zIndex(if (isDragged) 2f else 0f)
+                    .then(if (!isDragged) Modifier.animateItemPlacement(tween(170)) else Modifier)
+                    .graphicsLayer {
+                        translationY = if (draggedPairId == pair.stableId) draggedOffsetY else 0f
+                        scaleX = if (draggedPairId == pair.stableId) 1.015f else 1f
+                        scaleY = scaleX
+                        shadowElevation = if (draggedPairId == pair.stableId) 8.dp.toPx() else 0f
+                    }
+                    .then(if (pair.isReorderable) Modifier.pointerInput(pair.stableId) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                if (!committingOrder && draggedPairId == null) {
+                                    val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "pending-${pair.stableId}" }
+                                    if (info != null) {
+                                        reorderPairs = latestPending
+                                        originalOrder = reorderPairs.filter { it.isReorderable }.map { it.stableId }
+                                        dragCenter = info.offset + info.size / 2f
+                                        draggedOffsetY = 0f
+                                        draggedPairId = pair.stableId
+                                        reorderMode = true
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     }
                                 }
-                            )
-                        }
-                } else {
-                    Modifier
-                }
+                            },
+                            onDrag = { change, delta ->
+                                if (draggedPairId == pair.stableId) {
+                                    change.consume()
+                                    dragCenter += delta.y
+                                    moveDragged()
+                                }
+                            },
+                            onDragEnd = {
+                                if (draggedPairId == pair.stableId) {
+                                    val order = reorderPairs.filter { it.isReorderable }.map { it.stableId }
+                                    draggedPairId = null
+                                    draggedOffsetY = 0f
+                                    if (order != originalOrder) {
+                                        committingOrder = true
+                                        viewModel.reorderCompletePendingPairs(order)
+                                    } else resetDrag()
+                                }
+                            },
+                            onDragCancel = { if (draggedPairId == pair.stableId) resetDrag() }
+                        )
+                    } else Modifier)
                 PhotoPairCard(
                     modifier = Modifier.fillMaxWidth().then(reorderModifier),
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,
-                    currentTime = state.currentTime,
+                    currentTime = if (state.scheduleSettings.timerEnabled && !pair.fullyDownloaded) state.currentTime else 0L,
                     onEdit = if (reorderMode) null else { { editChoicePair = pair } },
                     onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
                     onSwap = if (reorderMode) null else { { viewModel.swapPair(pair.index) } },
-                    reorderMode = reorderMode,
+                    reorderMode = false,
                     onPreview = { previewPhoto = it }
                 )
             }
@@ -490,7 +532,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 PhotoPairCard(
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,
-                    currentTime = state.currentTime,
+                    currentTime = if (state.scheduleSettings.timerEnabled && !pair.fullyDownloaded) state.currentTime else 0L,
                     onEdit = null,
                     onDelete = null,
                     onSwap = null,
@@ -694,6 +736,7 @@ fun StatusHeader(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (state.scheduleSettings.timerEnabled) {
                     TargetProgressCard(targetAt = target, progress = state.targetCoverageProgress)
                     NextCountdownCard(
                         nextTag = nextTag,
@@ -701,15 +744,27 @@ fun StatusHeader(
                         intervalStartedAt = intervalStartedAt,
                         now = state.currentTime
                     )
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("หลัง Next ล่าสุด", color = MintMuted, style = MaterialTheme.typography.bodySmall)
+                            Text(state.lastNextAt?.let { fmtDuration((state.currentTime - it).coerceAtLeast(0L)) } ?: "--:--:--", color = MintText, style = MaterialTheme.typography.titleLarge)
+                        }
+                    }
                 }
                 ClayActionButton(
-                    text = if (state.isExportingNext) "กำลังบันทึก" else "Next",
+                    text = if (state.isExportingNext) "กำลังบันทึก" else "Download Next",
                     onClick = onDownloadNext,
                     enabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext,
                     icon = Icons.Default.DownloadForOffline,
                     modifier = Modifier.weight(1f).height(64.dp)
                 )
             }
+            if (state.scheduleSettings.timerEnabled) Text(
+                state.lastNextAt?.let { "Next ล่าสุด: " + fmtDuration((state.currentTime - it).coerceAtLeast(0L)) + " ที่ผ่านมา" }
+                    ?: "Next ล่าสุด: ยังไม่ได้ดาวน์โหลด",
+                color = MintMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 
@@ -800,14 +855,8 @@ fun StickyBottomBar(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Use preset target from settings when available; fallback to default +9h10m.
-                val defaultTarget = state.currentTime + (9 * 3600 * 1000L) + (10 * 60 * 1000L)
-                val presetTarget = state.timer.targetAt
-                val displayTarget = if (!state.timer.running && presetTarget != null && presetTarget > state.currentTime) {
-                    presetTarget
-                } else {
-                    defaultTarget
-                }
+                val displayTarget = state.scheduleSettings.finishOverrideAt?.takeIf { it > state.currentTime }
+                    ?: (state.currentTime + state.scheduleSettings.targetMinutes * 60_000L)
                 val finalPhotoAt = state.schedule.items.lastOrNull()?.planAt
                 val btnLabel = when {
                     !state.timer.running -> "Start (Finish ${fmtTime(displayTarget)})"
@@ -815,24 +864,29 @@ fun StickyBottomBar(
                     else -> "Running..."
                 }
 
-                ClayActionButton(
+                if (state.scheduleSettings.timerEnabled) ClayActionButton(
                     text = btnLabel,
                     onClick = onStart,
                     enabled = state.canStartTimer,
                     icon = Icons.Default.PlayArrow,
                     emphasized = false,
+                    tone = UtilityTone.Peach,
                     modifier = Modifier.weight(1.5f).height(48.dp)
                 )
-                ClayIconButton(
+                if (!state.scheduleSettings.timerEnabled) {
+                    ClayActionButton(text = "ถ่ายภาพ", onClick = onCam, icon = Icons.Default.PhotoCamera, tone = UtilityTone.Sky, modifier = Modifier.weight(2.3f).height(48.dp))
+                } else ClayIconButton(
                     onClick = onCam,
                     icon = Icons.Default.PhotoCamera,
-                    contentDescription = "Cam",
+                    contentDescription = "ถ่ายภาพ",
+                    tone = UtilityTone.Sky,
                     modifier = Modifier.weight(0.8f).height(48.dp)
                 )
                 ClayIconButton(
                     onClick = onUpload,
                     icon = Icons.Default.Upload,
-                    contentDescription = "Up",
+                    contentDescription = "เลือกภาพจากแกลเลอรี่",
+                    tone = UtilityTone.Lavender,
                     modifier = Modifier.weight(0.8f).height(48.dp)
                 )
             }
@@ -973,9 +1027,10 @@ private fun PairPhoto(
     onPreview: (PhotoEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val contextForImage = LocalContext.current
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
-    val dueBorderAlpha by rememberInfiniteTransition(label = "dueBorder").animateFloat(
+    val dueBorderAlpha = if (due) rememberInfiniteTransition(label = "dueBorder").animateFloat(
         initialValue = 0.28f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -983,12 +1038,12 @@ private fun PairPhoto(
             repeatMode = RepeatMode.Reverse
         ),
         label = "dueBorderAlpha"
-    )
+    ).value else 1f
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.9f)
+                .aspectRatio(1.35f)
                 .background(MintSoft, MaterialTheme.shapes.small)
                 .then(
                     if (due) {
@@ -1002,7 +1057,7 @@ private fun PairPhoto(
         ) {
             if (photo != null && photo.filePath.isNotBlank()) {
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current).data("file://${photo.filePath}").crossfade(true).build(),
+                    model = remember(photo.filePath) { ImageRequest.Builder(contextForImage).data("file://${photo.filePath}").crossfade(false).build() },
                     contentDescription = label,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
