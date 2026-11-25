@@ -1051,7 +1051,16 @@ private fun SectionHeaderCard(
                 color = MintText,
                 modifier = Modifier.weight(1f)
             )
-            MintBadge(text = "$count", type = if (count > 0) "ok" else "wait")
+            Surface(
+                color = if (LocalGhostDark.current) Color(0xFF343842) else Color(0xFFF0F1F4),
+                shape = RoundedCornerShape(6.dp),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp
+            ) {
+                Text("$count", modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    color = MintMuted, style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium)
+            }
             if (!actionText.isNullOrBlank() && onAction != null) {
                 Spacer(Modifier.width(8.dp))
                 TextButton(
