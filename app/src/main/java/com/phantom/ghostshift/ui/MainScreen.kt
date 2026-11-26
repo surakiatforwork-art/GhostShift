@@ -374,15 +374,26 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     // The pending section has a single header at index 0. Resolve by stable
     // photo ID, not the mutable IN/OUT slot number or current scroll position.
-    suspend fun focusPending(id: Long, blink: Boolean, fast: Boolean = false): Boolean {
+    suspend fun focusPending(id: Long, blink: Boolean, fast: Boolean = false, smooth: Boolean = false): Boolean {
         val pair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
         val index = latestPending.indexOf(pair) + 1
         val key = "pending-${pair.stableId}"
         val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
         val layout = listState.layoutInfo
         if (visible == null || visible.offset < layout.viewportStartOffset || visible.offset + visible.size > layout.viewportEndOffset) {
-            if (fast) {
-                // Avoid the distance-dependent lazy-list animation for Download Next.
+            if (smooth) {
+                // Locate is independent of export: favor a comfortable eased movement.
+                // Keep a nearby card's current position when possible.
+                if (visible != null && visible.size <= layout.viewportEndOffset - layout.viewportStartOffset) {
+                    val distance = if (visible.offset < layout.viewportStartOffset)
+                        visible.offset - layout.viewportStartOffset
+                    else visible.offset + visible.size - layout.viewportEndOffset
+                    listState.animateScrollBy(distance.toFloat(), tween(340, easing = FastOutSlowInEasing))
+                } else {
+                    listState.animateScrollToItem(index)
+                }
+            } else if (fast) {
+                // Keep the existing fast path for due-alarm navigation.
                 // A nearby clipped card gets a short bounded scroll; a distant
                 // card is placed immediately rather than traversing the list.
                 if (visible != null && visible.size <= layout.viewportEndOffset - layout.viewportStartOffset) {
@@ -426,7 +437,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         try {
             val candidate = latestState.pendingPhotos.firstOrNull()
             if (candidate?.id != id || candidate.filePath.isBlank() || latestState.isExportingNext) return@LaunchedEffect
-            if (focusPending(id, blink = true, fast = true) &&
+            if (focusPending(id, blink = true, smooth = true) &&
                 latestState.schedule.nextTag == candidate.tag &&
                 latestState.schedule.nextAt?.let { latestState.currentTime >= it } == true) {
                 lastAlarmFocus = id
@@ -876,21 +887,21 @@ private fun NextNavigationButton(
     modifier: Modifier = Modifier
 ) {
     val mode = if (exporting) 2 else if (locate) 1 else 0
-    val label = when (mode) { 2 -> "กำลังดาวน์โหลด"; 1 -> "ไปยังภาพถัดไป"; else -> "Download Next" }
+    val label = when (mode) { 2 -> "กำลังดาวน์โหลด"; 1 -> "Next"; else -> "Download Next" }
     val transition = updateTransition(mode, label = "nextActionMode")
     // Do not allow a tap on the outgoing Locate label to trigger Download.
     val stable = transition.currentState == transition.targetState && !transition.isRunning
     GlassControl(
         modifier.semantics { contentDescription = label },
-        UtilityTone.Primary, enabled && stable, { if (stable) onClick(locate) }
+        UtilityTone.Primary, enabled, { if (stable) onClick(locate) }
     ) { fg ->
-        transition.Crossfade(animationSpec = tween(150)) { current ->
+        transition.Crossfade(animationSpec = tween(260, easing = FastOutSlowInEasing)) { current ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (current == 1) Icons.Default.ArrowUpward else Icons.Default.DownloadForOffline,
                     contentDescription = null, tint = fg, modifier = Modifier.size(19.dp))
                 Spacer(Modifier.width(5.dp))
-                Text(when (current) { 2 -> "กำลังดาวน์โหลด"; 1 -> "ไปยังภาพถัดไป"; else -> "Download Next" },
+                Text(when (current) { 2 -> "กำลังดาวน์โหลด"; 1 -> "Next"; else -> "Download Next" },
                     color = fg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
