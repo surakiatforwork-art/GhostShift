@@ -41,6 +41,12 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.updateTransition
+import com.phantom.ghostshift.domain.NextPhotoVisibility
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.graphicsLayer
@@ -66,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -81,6 +88,8 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import java.io.File
 
+private data class NextThumbnailBounds(val id: Long, val top: Float, val bottom: Float)
+
 private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outPhoto: PhotoEntity?) {
     val stableId: Long get() = inPhoto?.id ?: outPhoto?.id ?: index.toLong()
     val remark: String? get() = inPhoto?.remark?.takeIf { it.isNotBlank() } ?: outPhoto?.remark?.takeIf { it.isNotBlank() }
@@ -95,24 +104,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     val state by viewModel.uiState.collectAsState()
     val progress by viewModel.exportProgress.collectAsState()
     val addedFocus by viewModel.pendingFocus.collectAsState()
-    var requestedDownload by remember { mutableStateOf<Long?>(null) }
+    var requestedLocate by remember { mutableStateOf<Long?>(null) }
     var highlightPhotoId by remember { mutableStateOf<Long?>(null) }
     var pulseOn by remember { mutableStateOf(false) }
     progress?.let { ExportProgressDialog(it, viewModel::dismissExportError) }
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
-    // The dialog blocks manual/automatic focus jobs, so its pulse has an independent
-    // lifetime. It begins with the dialog and stops immediately when dismissed.
-    var confirmPulseOn by remember { mutableStateOf(false) }
-    LaunchedEffect(confirmIn?.id) {
-        if (confirmIn == null) {
-            confirmPulseOn = false
-            return@LaunchedEffect
-        }
-        try {
-            confirmPulseOn = true
-            delay(160)
-        } finally { confirmPulseOn = false }
-    }
     var reservePair by remember { mutableStateOf(false) }
     var pairRemark by remember { mutableStateOf("") }
     confirmIn?.let { photo ->
@@ -196,6 +192,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     val latestPending by rememberUpdatedState(pendingPairs)
     val latestState by rememberUpdatedState(state)
+    // Measure only the next thumbnail and the list viewport, not every card.
+    var viewportBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    var nextBounds by remember { mutableStateOf<NextThumbnailBounds?>(null) }
+    val nextPhotoId = state.pendingPhotos.firstOrNull()?.id
+    val nextPairKey = pendingPairs.firstOrNull { it.inPhoto?.id == nextPhotoId || it.outPhoto?.id == nextPhotoId }?.let { "pending-${it.stableId}" }
+    val nextVisible by remember(nextPhotoId, nextPairKey, listState) {
+        derivedStateOf {
+            val bounds = nextBounds
+            val viewport = viewportBounds
+            nextPhotoId != null && bounds?.id == nextPhotoId && viewport != null &&
+                listState.layoutInfo.visibleItemsInfo.any { it.key == nextPairKey } &&
+                NextPhotoVisibility.isVisible(bounds.top, bounds.bottom, viewport.top, viewport.bottom)
+        }
+    }
+    val measureNext: (Long, Float, Float) -> Unit = remember {
+        { id, top, bottom -> nextBounds = NextThumbnailBounds(id, top, bottom) }
+    }
     fun resetDrag() {
         draggedPairId = null
         draggedOffsetY = 0f
@@ -372,7 +385,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                 // Avoid the distance-dependent lazy-list animation for Download Next.
                 // A nearby clipped card gets a short bounded scroll; a distant
                 // card is placed immediately rather than traversing the list.
-                if (visible != null) {
+                if (visible != null && visible.size <= layout.viewportEndOffset - layout.viewportStartOffset) {
                     val distance = when {
                         visible.offset < layout.viewportStartOffset -> visible.offset - layout.viewportStartOffset
                         visible.offset + visible.size > layout.viewportEndOffset -> visible.offset + visible.size - layout.viewportEndOffset
@@ -406,31 +419,22 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         previewPhoto != null || showEditDialog || editChoicePair != null || deleteChoicePair != null ||
         confirmDeleteAll || confirmResetTimer || confirmDeletePendingPhoto != null || confirmDeletePendingPair != null || gateDialog
     val addedReady = addedFocus?.photoId?.let { id -> pendingPairs.any { it.inPhoto?.id == id || it.outPhoto?.id == id } } == true
-    // Manual navigation must not restart when the clock ticks or a new import arrives.
-    LaunchedEffect(requestedDownload, focusBlocked) {
-        val manual = requestedDownload ?: return@LaunchedEffect
-        if (focusBlocked) { requestedDownload = null; return@LaunchedEffect }
+    // Locate is intentionally navigation only; it can never export or open confirmation.
+    LaunchedEffect(requestedLocate, focusBlocked) {
+        val id = requestedLocate ?: return@LaunchedEffect
+        if (focusBlocked) { requestedLocate = null; return@LaunchedEffect }
         try {
             val candidate = latestState.pendingPhotos.firstOrNull()
-            if (candidate?.id != manual || candidate.filePath.isBlank() || latestState.isExportingNext) return@LaunchedEffect
-            val isIn = candidate.kind.name == "IN"
-            // IN: finish scrolling, then start the pulse and show confirmation together.
-            // OUT: one short pair-card pulse before exporting.
-            if (focusPending(manual, !isIn, fast = true)) {
-                val next = latestState.pendingPhotos.firstOrNull()
-                if (next?.id == manual && next.kind == candidate.kind && next.filePath.isNotBlank() && !latestState.isExportingNext) {
-                    if (isIn) {
-                        confirmPulseOn = true
-                        confirmIn = next
-                    } else viewModel.exportNextPhoto(next.id)
-                    if (latestState.schedule.nextTag == next.tag &&
-                        latestState.schedule.nextAt?.let { latestState.currentTime >= it } == true) lastAlarmFocus = manual
-                }
+            if (candidate?.id != id || candidate.filePath.isBlank() || latestState.isExportingNext) return@LaunchedEffect
+            if (focusPending(id, blink = true, fast = true) &&
+                latestState.schedule.nextTag == candidate.tag &&
+                latestState.schedule.nextAt?.let { latestState.currentTime >= it } == true) {
+                lastAlarmFocus = id
             }
-        } finally { requestedDownload = null }
+        } finally { requestedLocate = null }
     }
-    LaunchedEffect(addedFocus, addedReady, alarmPhoto?.id, focusBlocked, requestedDownload) {
-        if (focusBlocked || requestedDownload != null) return@LaunchedEffect
+    LaunchedEffect(addedFocus, addedReady, alarmPhoto?.id, focusBlocked, requestedLocate) {
+        if (focusBlocked || requestedLocate != null) return@LaunchedEffect
         if (alarmPhoto == null) lastAlarmFocus = null
         if (alarmPhoto != null && lastAlarmFocus != alarmPhoto.id) {
             if (focusPending(alarmPhoto.id, true, fast = true)) lastAlarmFocus = alarmPhoto.id
@@ -448,7 +452,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     LaunchedEffect(overflow > 0L) {
         if (overflow <= 0L) overflowAcknowledged = false
     }
-    if (overflow > 0L && !overflowAcknowledged && progress == null && confirmIn == null && !reservePair && requestedDownload == null) {
+    if (overflow > 0L && !overflowAcknowledged && progress == null && confirmIn == null && !reservePair && requestedLocate == null) {
         val finish = state.schedule.items.lastOrNull()?.planAt
         GhostDialog(
             onDismissRequest = { overflowAcknowledged = true },
@@ -559,11 +563,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
             StatusHeader(
-                state = state.copy(isExportingNext = state.isExportingNext || requestedDownload != null || confirmIn != null),
-                onDeleteAll = { if (requestedDownload == null) confirmDeleteAll = true },
-                onDownloadNext = {
-                    if (requestedDownload == null && !focusBlocked) {
-                        requestedDownload = state.pendingPhotos.firstOrNull()?.takeIf { it.filePath.isNotBlank() && !state.isExportingNext }?.id
+                state = state,
+                locateNext = nextPhotoId != null && !nextVisible,
+                locatingNext = requestedLocate != null,
+                nextActionBlocked = focusBlocked,
+                onDeleteAll = { if (requestedLocate == null) confirmDeleteAll = true },
+                onDownloadNext = { locate ->
+                    if (requestedLocate == null && !focusBlocked) {
+                        val photo = latestState.pendingPhotos.firstOrNull()?.takeIf { it.filePath.isNotBlank() && !latestState.isExportingNext }
+                        if (photo != null && photo.id == nextPhotoId) {
+                            if (locate || !nextVisible) requestedLocate = photo.id
+                            else if (photo.kind.name == "IN") confirmIn = photo
+                            else viewModel.exportNextPhoto(photo.id)
+                        }
                     }
                 },
                 onSettings = { showSettings = true },
@@ -642,8 +654,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             }) {
         LazyColumn(
             state = listState,
-            userScrollEnabled = draggedPairId == null && requestedDownload == null,
-            modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = draggedPairId == null && requestedLocate == null,
+            modifier = Modifier.fillMaxSize().onGloballyPositioned { viewportBounds = it.boundsInWindow() },
             verticalArrangement = Arrangement.spacedBy(0.dp),
             contentPadding = PaddingValues(bottom = 76.dp)
         ) {
@@ -691,7 +703,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     planAtByTag = state.schedule.planAtByTag,
                     currentTime = if (state.scheduleSettings.timerEnabled) state.currentTime else 0L,
                     nextPhotoId = state.pendingPhotos.firstOrNull()?.id,
-                    highlightPhotoId = if (confirmIn != null) confirmIn?.id?.takeIf { confirmPulseOn } else if (pulseOn) highlightPhotoId else null,
+                    highlightPhotoId = if (pulseOn) highlightPhotoId else null,
+                    onNextThumbnailBounds = measureNext,
                     onEdit = if (reorderMode) null else { { editChoicePair = pair } },
                     onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
                     onSwap = if (reorderMode) null else { { viewModel.swapPair(pair.index) } },
@@ -852,13 +865,49 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     }
 }
 
+/** The outer button and touch target stay fixed while its label/icon crossfade. */
+@OptIn(androidx.compose.animation.ExperimentalAnimationApi::class)
+@Composable
+private fun NextNavigationButton(
+    locate: Boolean,
+    exporting: Boolean,
+    enabled: Boolean,
+    onClick: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val mode = if (exporting) 2 else if (locate) 1 else 0
+    val label = when (mode) { 2 -> "กำลังดาวน์โหลด"; 1 -> "ไปยังภาพถัดไป"; else -> "Download Next" }
+    val transition = updateTransition(mode, label = "nextActionMode")
+    // Do not allow a tap on the outgoing Locate label to trigger Download.
+    val stable = transition.currentState == transition.targetState && !transition.isRunning
+    GlassControl(
+        modifier.semantics { contentDescription = label },
+        UtilityTone.Primary, enabled && stable, { if (stable) onClick(locate) }
+    ) { fg ->
+        transition.Crossfade(animationSpec = tween(150)) { current ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (current == 1) Icons.Default.ArrowUpward else Icons.Default.DownloadForOffline,
+                    contentDescription = null, tint = fg, modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(when (current) { 2 -> "กำลังดาวน์โหลด"; 1 -> "ไปยังภาพถัดไป"; else -> "Download Next" },
+                    color = fg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+    }
+}
+
 @Composable
 fun StatusHeader(
     state: MainUiState,
     onDeleteAll: () -> Unit,
-    onDownloadNext: () -> Unit,
+    onDownloadNext: (Boolean) -> Unit,
     onSettings: () -> Unit,
-    onActivity: () -> Unit
+    onActivity: () -> Unit,
+    locateNext: Boolean = false,
+    locatingNext: Boolean = false,
+    nextActionBlocked: Boolean = false
 ) {
     Surface(
         tonalElevation = 0.dp,
@@ -911,16 +960,16 @@ fun StatusHeader(
                 val intervalStartedAt = state.downloadedPhotos.maxOfOrNull { it.downloadedAt ?: Long.MIN_VALUE }
                     ?.takeIf { it != Long.MIN_VALUE } ?: state.timer.startAt
                 val elapsed = state.lastNextAt?.takeIf { state.downloadedPhotos.isNotEmpty() }?.let { fmtDuration((state.currentTime - it).coerceAtLeast(0L)) } ?: "--:--:--"
-                val nextEnabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext
+                val nextEnabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext && !locatingNext && !nextActionBlocked
                 if (!state.scheduleSettings.timerEnabled) {
                     Column(Modifier.fillMaxWidth().height(headerHeight), verticalArrangement = Arrangement.spacedBy(gap)) {
                         ElapsedPhotoCard(elapsed, Modifier.fillMaxWidth().height(elapsedHeight))
                         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(gap)) {
                             CompactOverview(state, Modifier.weight(1f).fillMaxHeight(), onActivity, horizontal = true)
-                            ClayActionButton(
-                                text = if (state.isExportingNext) "กำลังดาวน์โหลด" else "Download Next",
-                                onClick = onDownloadNext, enabled = nextEnabled, icon = Icons.Default.DownloadForOffline,
-                                modifier = Modifier.weight(1f).fillMaxHeight(), tone = UtilityTone.Primary)
+                            NextNavigationButton(
+                                locate = locateNext, exporting = state.isExportingNext,
+                                onClick = onDownloadNext, enabled = nextEnabled,
+                                modifier = Modifier.weight(1f).fillMaxHeight())
                         }
                     }
                 } else {
@@ -942,10 +991,10 @@ fun StatusHeader(
                         }
                         Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(gap)) {
                             CompactOverview(state, Modifier.fillMaxWidth().weight(1f), onActivity, horizontal = true)
-                            ClayActionButton(
-                                text = if (state.isExportingNext) "กำลังดาวน์โหลด" else "Download Next",
-                                onClick = onDownloadNext, enabled = nextEnabled, icon = Icons.Default.DownloadForOffline,
-                                modifier = Modifier.fillMaxWidth().height(enabledButtonHeight), tone = UtilityTone.Primary)
+                            NextNavigationButton(
+                                locate = locateNext, exporting = state.isExportingNext,
+                                onClick = onDownloadNext, enabled = nextEnabled,
+                                modifier = Modifier.fillMaxWidth().height(enabledButtonHeight))
                         }
                     }
                 }
@@ -1192,7 +1241,8 @@ private fun PhotoPairCard(
     nextPhotoId: Long? = null,
     cardElevation: androidx.compose.ui.unit.Dp = 1.dp,
     neutralColor: Boolean = false,
-    highlightPhotoId: Long? = null
+    highlightPhotoId: Long? = null,
+    onNextThumbnailBounds: ((Long, Float, Float) -> Unit)? = null
 ) {
     val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
@@ -1245,8 +1295,8 @@ private fun PhotoPairCard(
                 }
                 Box(Modifier.weight(0.85f)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
-                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
+                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId, highlightPhotoId, onNextThumbnailBounds)
+                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId, highlightPhotoId, onNextThumbnailBounds)
                     }
                     if (!reorderMode && !pair.fullyDownloaded) {
                         ClayIconButton(
@@ -1286,17 +1336,27 @@ private fun PairPhoto(
     currentTime: Long,
     onPreview: (PhotoEntity) -> Unit,
     modifier: Modifier = Modifier,
-    nextPhotoId: Long? = null
+    nextPhotoId: Long? = null,
+    highlightPhotoId: Long? = null,
+    onNextThumbnailBounds: ((Long, Float, Float) -> Unit)? = null
 ) {
     val contextForImage = LocalContext.current
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
     val isNext = nextPhotoId != null && photo?.id == nextPhotoId
+    val highlighted = highlightPhotoId != null && photo?.id == highlightPhotoId && !downloaded
+    val measureModifier = if (isNext && photo != null && onNextThumbnailBounds != null) {
+        Modifier.onGloballyPositioned { coordinates ->
+            val y = coordinates.positionInWindow().y
+            onNextThumbnailBounds(photo.id, y, y + coordinates.size.height)
+        }
+    } else Modifier
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1.35f)
+                .then(measureModifier)
                 .clip(MaterialTheme.shapes.small)
                 .background(MintSoft, MaterialTheme.shapes.small)
                 .then(
@@ -1317,6 +1377,12 @@ private fun PairPhoto(
                 )
             } else {
                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = MintMuted, modifier = Modifier.align(Alignment.Center).size(36.dp))
+            }
+            if (highlighted) {
+                Box(Modifier.matchParentSize()
+                    .border(3.dp, MintAccent, MaterialTheme.shapes.small)
+                    .background(MintAccent.copy(alpha = .12f))
+                    .semantics { contentDescription = "กำลังเน้น $label" })
             }
             if (downloaded) {
                 MintBadge(text = "✓ ดาวน์โหลดแล้ว", type = "downloaded", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
