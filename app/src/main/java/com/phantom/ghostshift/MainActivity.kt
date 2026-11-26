@@ -18,6 +18,30 @@ class MainActivity : ComponentActivity() {
     private var onSharedPhotosReceived: ((List<SharedPhotoInput>) -> Unit)? = null
     private var pendingSharedPhotos: List<SharedPhotoInput>? = null
     private var initialShareHandled = false
+    // Registered only by the visible CameraScreen. Consume the matching UP
+    // even if the photo has already closed the camera on DOWN.
+    var cameraShutterAction: (() -> Unit)? = null
+    private val cameraVolumeKeys = mutableSetOf<Int>()
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val key = event.keyCode
+        if (key == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
+            key == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+            when (event.action) {
+                android.view.KeyEvent.ACTION_DOWN -> {
+                    val action = cameraShutterAction
+                    if (action != null || key in cameraVolumeKeys) {
+                        if (event.repeatCount == 0 && cameraVolumeKeys.add(key)) action?.invoke()
+                        return true
+                    }
+                }
+                android.view.KeyEvent.ACTION_UP -> {
+                    if (cameraVolumeKeys.remove(key)) return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,8 +85,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        requestHighRefreshRate()
         isVisible = true
         com.phantom.ghostshift.system.AlertOverlayController.dismiss(applicationContext)
+    }
+
+    // This is a window-level preference, not a system setting. Match the current
+    // resolution and request up to 120 Hz; Android can still honor battery,
+    // thermal and user display restrictions. Older 60 Hz phones keep their mode.
+    @Suppress("DEPRECATION")
+    private fun requestHighRefreshRate() {
+        val display = if (android.os.Build.VERSION.SDK_INT >= 30) this.display
+            else windowManager.defaultDisplay
+        val current = display?.mode ?: return
+        val candidate = display.supportedModes
+            .filter { it.physicalWidth == current.physicalWidth &&
+                it.physicalHeight == current.physicalHeight && it.refreshRate <= 120.5f }
+            .maxByOrNull { it.refreshRate } ?: return
+        if (candidate.refreshRate <= 60.5f) return
+        val attributes = window.attributes
+        if (attributes.preferredDisplayModeId != candidate.modeId) {
+            attributes.preferredDisplayModeId = candidate.modeId
+            window.attributes = attributes
+        }
     }
 
     override fun onPause() {

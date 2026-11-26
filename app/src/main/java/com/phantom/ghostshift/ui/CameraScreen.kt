@@ -2,11 +2,18 @@ package com.phantom.ghostshift.ui
 
 import android.content.Context
 import android.net.Uri
-import android.view.ViewGroup
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.flow.first
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
@@ -21,43 +28,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import android.view.HapticFeedbackConstants
+import com.phantom.ghostshift.MainActivity
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.border
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
-import android.view.TextureView
-import android.util.Log
-
-// Helper functions for TextureView mirror
-private fun findTextureView(v: android.view.View): TextureView? {
-    if (v is TextureView) return v
-    if (v is android.view.ViewGroup) {
-        for (i in 0 until v.childCount) {
-            val r = findTextureView(v.getChildAt(i))
-            if (r != null) return r
-        }
-    }
-    return null
-}
-
-private fun applyMirror(previewView: PreviewView, isFront: Boolean) {
-    previewView.post {
-        val tv = findTextureView(previewView)
-        if (tv != null) {
-            tv.scaleX = if (isFront) -1f else 1f   // mirror เฉพาะภาพกล้อง
-            Log.d("CameraScreen", "Applied mirror to TextureView: scaleX=${tv.scaleX}")
-        } else {
-            // ถ้าไม่มี TextureView แปลว่ายังเป็น SurfaceView → mirror ด้วย scaleX จะไม่เห็นผล
-            Log.w("CameraScreen", "No TextureView found. Likely SurfaceView; mirror won't work.")
-        }
-    }
-}
+import kotlin.coroutines.resumeWithException
 
 @Composable
 fun CameraScreen(
@@ -66,189 +53,260 @@ fun CameraScreen(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    val activity = remember(context) {
+        var current: Context? = context
+        while (current is android.content.ContextWrapper && current !is MainActivity) {
+            val next = current.baseContext
+            if (next === current) break
+            current = next
+        }
+        current as? MainActivity
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
-    
     var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_FRONT) }
     var captureLocked by remember { mutableStateOf(false) }
-    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
-    // Web: Mirror for front cam is typical. Let's support it or just rely on CameraX default.
-    // CameraX PreviewView handles mirroring for front camera automatically in view, but the captured image might not.
-    // We will just stick to standard capture for now, focusing on Viewfinder UI parity.
-    
-    val preview = remember { 
-        Preview.Builder()
-            .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_4_3)
-            .build() 
+    var closing by remember { mutableStateOf(false) }
+    var switching by remember { mutableStateOf(false) }
+    var capturedResult by remember { mutableStateOf<Pair<Uri, Boolean>?>(null) }
+    val screenMotion = remember { Animatable(0f) }
+    val lensCover = remember { Animatable(1f) }
+    val shutterFlash = remember { Animatable(0f) }
+    val shutterScale = remember { Animatable(1f) }
+    var shutterAnimating by remember { mutableStateOf(false) }
+    var cameraBound by remember { mutableStateOf(false) }
+    var streaming by remember { mutableStateOf(false) }
+    var canSwitch by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    val previewView = remember(context) {
+        PreviewView(context).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            setBackgroundColor(android.graphics.Color.BLACK)
+        }
     }
-    val imageCapture = remember { 
-        ImageCapture.Builder()
-            .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_4_3)
-            .build() 
+    val preview = remember { Preview.Builder().setTargetAspectRatio(AspectRatio.RATIO_4_3).build() }
+    val imageCapture = remember { ImageCapture.Builder().setTargetAspectRatio(AspectRatio.RATIO_4_3).build() }
+    val latestCapture by rememberUpdatedState(onImageCaptured)
+    val latestClose by rememberUpdatedState(onClose)
+
+    // Keep camera and its layout alive until the exit transition completes.
+    // Fade the controls and cover the preview instead of resizing the viewport.
+    LaunchedEffect(closing) {
+        if (closing) {
+            screenMotion.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
+            val result = capturedResult
+            if (result != null) latestCapture(result.first, result.second) else latestClose()
+        } else {
+            screenMotion.animateTo(1f, tween(280, easing = FastOutSlowInEasing))
+        }
     }
-    val cameraSelector = remember(lensFacing) { CameraSelector.Builder().requireLensFacing(lensFacing).build() }
-    
-    LaunchedEffect(lensFacing) {
-        val cameraProvider = context.getCameraProvider()
-        cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(
-            lifecycleOwner,
-            cameraSelector,
-            preview,
-            imageCapture
+
+    BackHandler { if (!captureLocked && !closing) closing = true }
+
+    DisposableEffect(previewView, lifecycleOwner) {
+        val listener = android.view.View.OnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+            previewSize = IntSize(right - left, bottom - top)
+        }
+        val observer = androidx.lifecycle.Observer<PreviewView.StreamState> { state ->
+            streaming = state == PreviewView.StreamState.STREAMING
+        }
+        previewView.addOnLayoutChangeListener(listener)
+        previewView.previewStreamState.observe(lifecycleOwner, observer)
+        onDispose {
+            previewView.removeOnLayoutChangeListener(listener)
+            previewView.previewStreamState.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(previewView, previewSize, lensFacing, lifecycleOwner) {
+        if (previewSize.width <= 0 || previewSize.height <= 0) return@LaunchedEffect
+        cameraBound = false
+        error = null
+        var provider: ProcessCameraProvider? = null
+        try {
+            provider = context.getCameraProvider()
+            canSwitch = provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) &&
+                provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
+            val requested = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+            if (!provider.hasCamera(requested)) {
+                if (lensFacing == CameraSelector.LENS_FACING_FRONT && provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                    lensFacing = CameraSelector.LENS_FACING_BACK
+                    return@LaunchedEffect
+                }
+                error = "ไม่พบกล้องที่ใช้งานได้"
+                return@LaunchedEffect
+            }
+            val viewport = previewView.viewPort ?: throw IllegalStateException("Camera viewport is not ready")
+            val rotation = previewView.display?.rotation ?: android.view.Surface.ROTATION_0
+            preview.targetRotation = rotation
+            imageCapture.targetRotation = rotation
+            preview.setSurfaceProvider(previewView.surfaceProvider)
+            val group = UseCaseGroup.Builder()
+                .setViewPort(viewport)
+                .addUseCase(preview)
+                .addUseCase(imageCapture)
+                .build()
+            // Shared sensor crop: exactly the visible 3:4 frame, not the full phone screen.
+            // PreviewView already mirrors the front camera; the existing repository
+            // mirrors the saved front-camera image once, so no extra TextureView flip.
+            provider.bindToLifecycle(lifecycleOwner, requested, group)
+            cameraBound = true
+            awaitCancellation()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("CameraScreen", "Unable to bind camera", e)
+            error = "ไม่สามารถเปิดกล้องได้"
+        } finally {
+            cameraBound = false
+            provider?.unbind(preview, imageCapture)
+        }
+    }
+
+    // Fade out before changing the lens; reveal only after its preview streams.
+    // The black cover remains outside the JPEG capture pipeline.
+    LaunchedEffect(switching, closing) {
+        if (!switching || closing) return@LaunchedEffect
+        lensCover.animateTo(1f, tween(150, easing = FastOutSlowInEasing))
+        cameraBound = false
+        streaming = false
+        error = null
+        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK)
+            CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+        snapshotFlow { (cameraBound && streaming) || error != null }.first { it }
+        lensCover.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
+        switching = false
+    }
+    LaunchedEffect(cameraBound, streaming, error, switching, closing) {
+        if (switching || closing) return@LaunchedEffect
+        lensCover.animateTo(if ((cameraBound && streaming) || error != null) 0f else 1f,
+            tween(240, easing = FastOutSlowInEasing))
+    }
+
+    val ready = cameraBound && streaming && !captureLocked && !switching && !closing && !shutterAnimating
+
+    // One path for touch and both volume keys, with a synchronous lock
+    // against held buttons, rapid taps and simultaneous inputs.
+    fun triggerShutter() {
+        if (!cameraBound || !streaming || captureLocked || switching || closing || shutterAnimating) return
+        captureLocked = true
+        shutterAnimating = true
+        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        scope.launch {
+            try {
+                shutterFlash.snapTo(.92f)
+                shutterScale.snapTo(.90f)
+                delay(75)
+                launch { shutterScale.animateTo(1f, tween(135, easing = FastOutSlowInEasing)) }
+                shutterFlash.animateTo(0f, tween(135, easing = FastOutSlowInEasing))
+            } finally {
+                shutterAnimating = false
+            }
+        }
+        takePhoto(
+            filenameFormat = "yyyy-MM-dd-HH-mm-ss-SSS",
+            imageCapture = imageCapture,
+            outputDirectory = outputDirectory,
+            mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT,
+            executor = ContextCompat.getMainExecutor(context),
+            onImageCaptured = { uri, mirror -> capturedResult = uri to mirror },
+            onError = {
+                captureLocked = false
+                android.util.Log.e("CameraScreen", "Capture failed", it)
+            }
         )
     }
-
-    LaunchedEffect(lensFacing, previewViewRef) {
-        val previewView = previewViewRef ?: return@LaunchedEffect
-        applyMirror(previewView, lensFacing == CameraSelector.LENS_FACING_FRONT)
-    }
-
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // Camera Preview with mirror effect for front camera
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            // AndroidView with proper initialization order - INSIDE the Box
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        // 1. Set implementationMode FIRST (before surface provider)
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        this.scaleType = PreviewView.ScaleType.FILL_CENTER
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        preview.setSurfaceProvider(surfaceProvider)
-                        imageCapture.targetRotation = display?.rotation ?: android.view.Surface.ROTATION_0
-                        previewViewRef = this
-                    }
-                },
-                update = { previewView ->
-                    imageCapture.targetRotation = previewView.display?.rotation ?: android.view.Surface.ROTATION_0
-                    previewViewRef = previewView
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-            
-            // 4:3 Frame Overlay - shows the capture area
-            BoxWithConstraints(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                val maxW = maxWidth
-                val maxH = maxHeight
-                // Calculate 4:3 portrait frame size
-                val frameWidth: androidx.compose.ui.unit.Dp
-                val frameHeight: androidx.compose.ui.unit.Dp
-                
-                // Portrait 3:4 (width:height = 3:4)
-                val targetRatio = 3f / 4f
-                val screenRatio = maxW / maxH
-                
-                if (screenRatio > targetRatio) {
-                    // Screen is wider - fit to height
-                    frameHeight = maxH * 0.85f
-                    frameWidth = frameHeight * targetRatio
-                } else {
-                    // Screen is taller - fit to width
-                    frameWidth = maxW * 0.9f
-                    frameHeight = frameWidth / targetRatio
-                }
-                
-                // Draw frame border
-                Box(
-                    modifier = Modifier
-                        .size(frameWidth, frameHeight)
-                        .border(2.dp, Color.White.copy(alpha = 0.7f))
-                )
-                
-                // Corner indicators
-                Canvas(
-                    modifier = Modifier.size(frameWidth, frameHeight)
-                ) {
-                    val cornerLength = 30.dp.toPx()
-                    val strokeWidth = 4.dp.toPx()
-                    val color = Color.White
-                    
-                    // Top-left corner
-                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(cornerLength, 0f), strokeWidth)
-                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(0f, cornerLength), strokeWidth)
-                    
-                    // Top-right corner
-                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width - cornerLength, 0f), strokeWidth)
-                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width, cornerLength), strokeWidth)
-                    
-                    // Bottom-left corner
-                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(cornerLength, size.height), strokeWidth)
-                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(0f, size.height - cornerLength), strokeWidth)
-                    
-                    // Bottom-right corner
-                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, size.height), androidx.compose.ui.geometry.Offset(size.width - cornerLength, size.height), strokeWidth)
-                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, size.height), androidx.compose.ui.geometry.Offset(size.width, size.height - cornerLength), strokeWidth)
-                }
-            }
+    val latestShutter by rememberUpdatedState(newValue = { triggerShutter() })
+    DisposableEffect(activity) {
+        val action: () -> Unit = { latestShutter() }
+        activity?.cameraShutterAction = action
+        onDispose {
+            if (activity?.cameraShutterAction === action) activity.cameraShutterAction = null
         }
-
-        // Overlay UI
-        // Top Bar: Close, Switch
+    }
+    LaunchedEffect(capturedResult, shutterAnimating) {
+        if (capturedResult != null && !shutterAnimating) closing = true
+    }
+    Column(
+        Modifier.fillMaxSize().background(Color(0xFF101012))
+            .systemBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .align(Alignment.TopCenter),
+            Modifier.fillMaxWidth().height(64.dp).graphicsLayer {
+                alpha = screenMotion.value
+                translationY = -8.dp.toPx() * (1f - screenMotion.value)
+            }.padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = onClose) {
+            IconButton(onClick = { closing = true }, enabled = !captureLocked && !closing) {
                 Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
             }
-            // Flash/Mirror toggles could go here if needed
+            Text("3:4", color = Color.White.copy(alpha = .75f),
+                style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.size(48.dp))
         }
 
-        // Bottom Bar: Capture, Gallery? Switch Cam
+        BoxWithConstraints(
+            Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            // Fit the full portrait frame inside the available area.
+            // Outside the frame is opaque UI background, never part of the photo.
+            val frameWidth = minOf(maxWidth, maxHeight * .75f)
+            val frameHeight = frameWidth / .75f
+            Box(Modifier.size(frameWidth, frameHeight).background(Color.Black),
+                contentAlignment = Alignment.Center) {
+                AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+                Box(Modifier.matchParentSize().graphicsLayer {
+                    alpha = maxOf(lensCover.value, 1f - screenMotion.value)
+                }.background(Color(0xFF101012)))
+                // Shutter blackout is UI only; never applied to the output image.
+                Box(Modifier.matchParentSize().graphicsLayer {
+                    alpha = shutterFlash.value
+                }.background(Color.Black))
+                if (error != null && !closing) {
+                    Text(error.orEmpty(), color = Color.White, modifier = Modifier.padding(16.dp))
+                } else if ((!cameraBound || !streaming) && !switching && !closing) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 32.dp)
-                .align(Alignment.BottomCenter),
+            Modifier.fillMaxWidth().height(112.dp).graphicsLayer {
+                alpha = screenMotion.value
+                translationY = 10.dp.toPx() * (1f - screenMotion.value)
+            }.padding(horizontal = 24.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { 
-                 lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT 
-                 else CameraSelector.LENS_FACING_BACK
-            }) {
-                Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", tint = Color.White, modifier = Modifier.size(32.dp))
-            }
-
+            Spacer(Modifier.size(48.dp))
             Button(
-                onClick = {
-                    if (captureLocked) return@Button
-                    captureLocked = true
-                    takePhoto(
-                        filenameFormat = "yyyy-MM-dd-HH-mm-ss-SSS",
-                        imageCapture = imageCapture,
-                        outputDirectory = outputDirectory,
-                        mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT,
-                        executor = ContextCompat.getMainExecutor(context),
-                        onImageCaptured = { uri, mirrorHorizontally ->
-                            onImageCaptured(uri, mirrorHorizontally)
-                        },
-                        onError = {
-                            captureLocked = false
-                        }
-                    )
+                onClick = { triggerShutter() },
+                enabled = ready,
+                modifier = Modifier.size(80.dp).graphicsLayer {
+                    scaleX = shutterScale.value
+                    scaleY = shutterScale.value
                 },
-                enabled = !captureLocked,
-                modifier = Modifier.size(80.dp),
                 shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White)
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White,
+                    disabledContainerColor = if (captureLocked || shutterAnimating) Color.White
+                        else Color.White.copy(alpha = .35f))
+            ) {}
+            IconButton(
+                modifier = Modifier.offset(x = 14.dp),
+                enabled = ready && canSwitch,
+                onClick = { if (ready && canSwitch) switching = true }
             ) {
-                // Shutter button (inner circle)
+                Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera",
+                    tint = Color.White.copy(alpha = if (ready && canSwitch) 1f else .4f),
+                    modifier = Modifier.size(32.dp))
             }
-
-            Spacer(Modifier.size(32.dp)) // Spacer to balance layout
         }
     }
 }
@@ -284,9 +342,12 @@ private fun takePhoto(
     )
 }
 
-private suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCoroutine { continuation ->
-    val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-    cameraProviderFuture.addListener({
-        continuation.resume(cameraProviderFuture.get())
+private suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCancellableCoroutine { continuation ->
+    val future = ProcessCameraProvider.getInstance(this)
+    future.addListener({
+        if (continuation.isActive) {
+            try { continuation.resume(future.get()) }
+            catch (e: Exception) { continuation.resumeWithException(e) }
+        }
     }, ContextCompat.getMainExecutor(this))
 }

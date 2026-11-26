@@ -28,7 +28,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
@@ -105,8 +104,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     val progress by viewModel.exportProgress.collectAsState()
     val addedFocus by viewModel.pendingFocus.collectAsState()
     var requestedLocate by remember { mutableStateOf<Long?>(null) }
+    var autoScrolling by remember { mutableStateOf(false) }
     var highlightPhotoId by remember { mutableStateOf<Long?>(null) }
     var pulseOn by remember { mutableStateOf(false) }
+    var pulseSequence by remember { mutableLongStateOf(0L) }
+    var pulseRequest by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     progress?.let { ExportProgressDialog(it, viewModel::dismissExportError) }
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
     var reservePair by remember { mutableStateOf(false) }
@@ -196,6 +198,28 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     var viewportBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var nextBounds by remember { mutableStateOf<NextThumbnailBounds?>(null) }
     val nextPhotoId = state.pendingPhotos.firstOrNull()?.id
+    // Independent of the navigation lock: Download Next is ready as soon as
+    // scrolling and the button transition finish, even during the two flashes.
+    LaunchedEffect(pulseRequest, nextPhotoId) {
+        val id = pulseRequest?.first
+        if (id == null || id != nextPhotoId) {
+            pulseOn = false
+            highlightPhotoId = null
+            return@LaunchedEffect
+        }
+        highlightPhotoId = id
+        try {
+            repeat(2) { count ->
+                pulseOn = true
+                delay(200)
+                pulseOn = false
+                if (count == 0) delay(140)
+            }
+        } finally {
+            pulseOn = false
+            highlightPhotoId = null
+        }
+    }
     val nextPairKey = pendingPairs.firstOrNull { it.inPhoto?.id == nextPhotoId || it.outPhoto?.id == nextPhotoId }?.let { "pending-${it.stableId}" }
     val nextVisible by remember(nextPhotoId, nextPairKey, listState) {
         derivedStateOf {
@@ -207,7 +231,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         }
     }
     val measureNext: (Long, Float, Float) -> Unit = remember {
-        { id, top, bottom -> nextBounds = NextThumbnailBounds(id, top, bottom) }
+        { id, top, bottom ->
+            val previous = nextBounds
+            if (previous?.id != id || previous.top != top || previous.bottom != bottom)
+                nextBounds = NextThumbnailBounds(id, top, bottom)
+        }
     }
     fun resetDrag() {
         draggedPairId = null
@@ -374,48 +402,76 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     // The pending section has a single header at index 0. Resolve by stable
     // photo ID, not the mutable IN/OUT slot number or current scroll position.
-    suspend fun focusPending(id: Long, blink: Boolean, fast: Boolean = false, smooth: Boolean = false): Boolean {
-        val pair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
-        val index = latestPending.indexOf(pair) + 1
-        val key = "pending-${pair.stableId}"
-        val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
-        val layout = listState.layoutInfo
-        if (visible == null || visible.offset < layout.viewportStartOffset || visible.offset + visible.size > layout.viewportEndOffset) {
-            if (smooth) {
-                // Locate is independent of export: favor a comfortable eased movement.
-                // Keep a nearby card's current position when possible.
-                if (visible != null && visible.size <= layout.viewportEndOffset - layout.viewportStartOffset) {
-                    val distance = if (visible.offset < layout.viewportStartOffset)
-                        visible.offset - layout.viewportStartOffset
-                    else visible.offset + visible.size - layout.viewportEndOffset
-                    listState.animateScrollBy(distance.toFloat(), tween(340, easing = FastOutSlowInEasing))
-                } else {
-                    listState.animateScrollToItem(index)
-                }
-            } else if (fast) {
-                // Keep the existing fast path for due-alarm navigation.
-                // A nearby clipped card gets a short bounded scroll; a distant
-                // card is placed immediately rather than traversing the list.
-                if (visible != null && visible.size <= layout.viewportEndOffset - layout.viewportStartOffset) {
-                    val distance = when {
-                        visible.offset < layout.viewportStartOffset -> visible.offset - layout.viewportStartOffset
-                        visible.offset + visible.size > layout.viewportEndOffset -> visible.offset + visible.size - layout.viewportEndOffset
-                        else -> 0
+    // All automatic navigation uses the same gentle, frame-driven motion in
+    // either direction. Unlike animateScrollToItem, distant items never teleport.
+    suspend fun focusPending(id: Long, blink: Boolean): Boolean {
+        val initialPair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
+        val key = "pending-${initialPair.stableId}"
+        autoScrolling = true
+        try {
+            listState.scroll {
+                var lastFrame = withFrameNanos { it }
+                var velocity = 0f
+                var stalledSeconds = 0f
+                // Cache the target index until the pending collection changes.
+                var knownPairs = latestPending
+                var pairIndex = knownPairs.indexOfFirst { it.inPhoto?.id == id || it.outPhoto?.id == id }
+                while (true) {
+                    // Read fresh layout after the frame, not before waiting for it.
+                    val frame = withFrameNanos { it }
+                    // Actual vsync interval: ~8.33ms at 120Hz, ~16.67ms at 60Hz.
+                    // No fixed 60Hz first step; cap long stalls to avoid large jumps.
+                    val dt = ((frame - lastFrame) / 1_000_000_000f).coerceIn(0f, .033f)
+                    lastFrame = frame
+                    if (dt <= 0f) continue
+                    val pairs = latestPending
+                    if (pairs !== knownPairs) {
+                        knownPairs = pairs
+                        pairIndex = pairs.indexOfFirst { it.inPhoto?.id == id || it.outPhoto?.id == id }
                     }
-                    listState.animateScrollBy(distance.toFloat(), tween(100, easing = FastOutSlowInEasing))
-                } else {
-                    listState.scrollToItem(index)
+                    if (pairIndex < 0) break
+                    val layout = listState.layoutInfo
+                    val viewport = (layout.viewportEndOffset - layout.viewportStartOffset).toFloat()
+                    if (viewport <= 0f || layout.visibleItemsInfo.isEmpty()) break
+                    val item = layout.visibleItemsInfo.firstOrNull { it.key == key }
+                    val distance = if (item != null) {
+                        when {
+                            item.size > viewport || item.offset < layout.viewportStartOffset ->
+                                (item.offset - layout.viewportStartOffset).toFloat()
+                            item.offset + item.size > layout.viewportEndOffset ->
+                                (item.offset + item.size - layout.viewportEndOffset).toFloat()
+                            else -> 0f
+                        }
+                    } else if (pairIndex + 1 < listState.firstVisibleItemIndex) -viewport else viewport
+                    val remaining = kotlin.math.abs(distance)
+                    if (remaining <= .5f) break
+                    val maxSpeed = viewport * 2.6f
+                    // Preserve velocity when the target becomes visible. Brake according
+                    // to remaining travel instead of switching abruptly to a new speed.
+                    val acceleration = viewport * 14f
+                    val desired = if (item == null) maxSpeed else
+                        kotlin.math.sqrt(2f * acceleration * remaining).coerceAtMost(maxSpeed)
+                    val delta = acceleration * dt
+                    val previousVelocity = velocity
+                    velocity += (desired - velocity).coerceIn(-delta, delta)
+                    // Integrate average velocity over the actual frame interval.
+                    // This keeps acceleration consistent at 60/90/120/144Hz.
+                    val step = ((previousVelocity + velocity) * .5f * dt).coerceAtMost(remaining)
+                    val consumed = scrollBy(if (distance < 0f) -step else step)
+                    stalledSeconds = if (kotlin.math.abs(consumed) < .01f) stalledSeconds + dt else 0f
+                    if (stalledSeconds >= .13f) break
                 }
-            } else listState.animateScrollToItem(index)
+            }
+        } finally {
+            autoScrolling = false
         }
-        // Wait for placement after the lazy list has composed the target card.
         withFrameNanos { }
         if (latestPending.none { it.inPhoto?.id == id || it.outPhoto?.id == id }) return false
+        val visible = listState.layoutInfo.visibleItemsInfo.any { it.key == key }
+        if (!visible) return false
         if (blink) {
-            highlightPhotoId = id
-            try {
-                pulseOn = true; delay(160)
-            } finally { pulseOn = false; highlightPhotoId = null }
+            pulseSequence += 1
+            pulseRequest = id to pulseSequence
         }
         return true
     }
@@ -437,7 +493,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         try {
             val candidate = latestState.pendingPhotos.firstOrNull()
             if (candidate?.id != id || candidate.filePath.isBlank() || latestState.isExportingNext) return@LaunchedEffect
-            if (focusPending(id, blink = true, smooth = true) &&
+            if (focusPending(id, blink = true) &&
                 latestState.schedule.nextTag == candidate.tag &&
                 latestState.schedule.nextAt?.let { latestState.currentTime >= it } == true) {
                 lastAlarmFocus = id
@@ -448,7 +504,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         if (focusBlocked || requestedLocate != null) return@LaunchedEffect
         if (alarmPhoto == null) lastAlarmFocus = null
         if (alarmPhoto != null && lastAlarmFocus != alarmPhoto.id) {
-            if (focusPending(alarmPhoto.id, true, fast = true)) lastAlarmFocus = alarmPhoto.id
+            if (focusPending(alarmPhoto.id, true)) lastAlarmFocus = alarmPhoto.id
         }
         if (addedReady) {
             addedFocus?.let { request ->
@@ -683,9 +739,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     onAdd = { pairRemark = ""; reservePair = true }) }
             }
 
-            items(visiblePendingPairs, key = { "pending-${it.stableId}" }) { pair ->
+            items(visiblePendingPairs, key = { "pending-${it.stableId}" }, contentType = { "pendingPair" }) { pair ->
                 val isDragged = draggedPairId == pair.stableId
-                val reorderModifier = if (!isDragged) Modifier.animateItemPlacement(tween(150)) else Modifier
+                val reorderModifier = if (!isDragged && !autoScrolling) Modifier.animateItemPlacement(tween(150)) else Modifier
                 if (isDragged) {
                     GroupBody {
                         val recess = MintText.copy(alpha = .18f)
@@ -735,7 +791,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                 )
             }
 
-            items(downloadedPairs, key = { "downloaded-${it.index}" }) { pair ->
+            items(downloadedPairs, key = { "downloaded-${it.index}" }, contentType = { "downloadedPair" }) { pair ->
                 GroupBody { PhotoPairCard(
                     pair = pair,
                     planAtByTag = state.schedule.planAtByTag,
