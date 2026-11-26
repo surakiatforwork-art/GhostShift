@@ -99,6 +99,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     var pulseOn by remember { mutableStateOf(false) }
     progress?.let { ExportProgressDialog(it, viewModel::dismissExportError) }
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
+    // The dialog blocks manual/automatic focus jobs, so its pulse has an independent
+    // lifetime. It begins with the dialog and stops immediately when dismissed.
+    var confirmPulseOn by remember { mutableStateOf(false) }
+    LaunchedEffect(confirmIn?.id) {
+        if (confirmIn == null) {
+            confirmPulseOn = false
+            return@LaunchedEffect
+        }
+        try {
+            repeat(2) {
+                confirmPulseOn = true
+                delay(180)
+                confirmPulseOn = false
+                delay(120)
+            }
+        } finally { confirmPulseOn = false }
+    }
     var reservePair by remember { mutableStateOf(false) }
     var pairRemark by remember { mutableStateOf("") }
     confirmIn?.let { photo ->
@@ -383,11 +400,18 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         val manual = requestedDownload ?: return@LaunchedEffect
         if (focusBlocked) { requestedDownload = null; return@LaunchedEffect }
         try {
-            if (focusPending(manual, true)) {
+            val candidate = latestState.pendingPhotos.firstOrNull()
+            if (candidate?.id != manual || candidate.filePath.isBlank() || latestState.isExportingNext) return@LaunchedEffect
+            val isIn = candidate.kind.name == "IN"
+            // IN: finish scrolling, then start the pulse and show confirmation together.
+            // OUT: retain the full two-pulse preflight before exporting.
+            if (focusPending(manual, !isIn)) {
                 val next = latestState.pendingPhotos.firstOrNull()
-                if (next?.id == manual && next.filePath.isNotBlank() && !latestState.isExportingNext) {
-                    if (next.kind.name == "IN") confirmIn = next
-                    else viewModel.exportNextPhoto(next.id)
+                if (next?.id == manual && next.kind == candidate.kind && next.filePath.isNotBlank() && !latestState.isExportingNext) {
+                    if (isIn) {
+                        confirmPulseOn = true
+                        confirmIn = next
+                    } else viewModel.exportNextPhoto(next.id)
                     if (latestState.schedule.nextTag == next.tag &&
                         latestState.schedule.nextAt?.let { latestState.currentTime >= it } == true) lastAlarmFocus = manual
                 }
@@ -656,7 +680,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     planAtByTag = state.schedule.planAtByTag,
                     currentTime = if (state.scheduleSettings.timerEnabled) state.currentTime else 0L,
                     nextPhotoId = state.pendingPhotos.firstOrNull()?.id,
-                    highlightPhotoId = if (pulseOn) highlightPhotoId else null,
+                    highlightPhotoId = if (confirmIn != null) confirmIn?.id?.takeIf { confirmPulseOn } else if (pulseOn) highlightPhotoId else null,
                     onEdit = if (reorderMode) null else { { editChoicePair = pair } },
                     onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
                     onSwap = if (reorderMode) null else { { viewModel.swapPair(pair.index) } },
