@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
@@ -108,12 +109,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             return@LaunchedEffect
         }
         try {
-            repeat(2) {
-                confirmPulseOn = true
-                delay(180)
-                confirmPulseOn = false
-                delay(120)
-            }
+            confirmPulseOn = true
+            delay(160)
         } finally { confirmPulseOn = false }
     }
     var reservePair by remember { mutableStateOf(false) }
@@ -364,14 +361,28 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
     // The pending section has a single header at index 0. Resolve by stable
     // photo ID, not the mutable IN/OUT slot number or current scroll position.
-    suspend fun focusPending(id: Long, blink: Boolean): Boolean {
+    suspend fun focusPending(id: Long, blink: Boolean, fast: Boolean = false): Boolean {
         val pair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
         val index = latestPending.indexOf(pair) + 1
         val key = "pending-${pair.stableId}"
         val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
         val layout = listState.layoutInfo
         if (visible == null || visible.offset < layout.viewportStartOffset || visible.offset + visible.size > layout.viewportEndOffset) {
-            listState.animateScrollToItem(index)
+            if (fast) {
+                // Avoid the distance-dependent lazy-list animation for Download Next.
+                // A nearby clipped card gets a short bounded scroll; a distant
+                // card is placed immediately rather than traversing the list.
+                if (visible != null) {
+                    val distance = when {
+                        visible.offset < layout.viewportStartOffset -> visible.offset - layout.viewportStartOffset
+                        visible.offset + visible.size > layout.viewportEndOffset -> visible.offset + visible.size - layout.viewportEndOffset
+                        else -> 0
+                    }
+                    listState.animateScrollBy(distance.toFloat(), tween(100, easing = FastOutSlowInEasing))
+                } else {
+                    listState.scrollToItem(index)
+                }
+            } else listState.animateScrollToItem(index)
         }
         // Wait for placement after the lazy list has composed the target card.
         withFrameNanos { }
@@ -379,7 +390,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         if (blink) {
             highlightPhotoId = id
             try {
-                repeat(2) { pulseOn = true; delay(180); pulseOn = false; delay(120) }
+                pulseOn = true; delay(160)
             } finally { pulseOn = false; highlightPhotoId = null }
         }
         return true
@@ -404,8 +415,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             if (candidate?.id != manual || candidate.filePath.isBlank() || latestState.isExportingNext) return@LaunchedEffect
             val isIn = candidate.kind.name == "IN"
             // IN: finish scrolling, then start the pulse and show confirmation together.
-            // OUT: retain the full two-pulse preflight before exporting.
-            if (focusPending(manual, !isIn)) {
+            // OUT: one short pair-card pulse before exporting.
+            if (focusPending(manual, !isIn, fast = true)) {
                 val next = latestState.pendingPhotos.firstOrNull()
                 if (next?.id == manual && next.kind == candidate.kind && next.filePath.isNotBlank() && !latestState.isExportingNext) {
                     if (isIn) {
@@ -422,7 +433,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         if (focusBlocked || requestedDownload != null) return@LaunchedEffect
         if (alarmPhoto == null) lastAlarmFocus = null
         if (alarmPhoto != null && lastAlarmFocus != alarmPhoto.id) {
-            if (focusPending(alarmPhoto.id, true)) lastAlarmFocus = alarmPhoto.id
+            if (focusPending(alarmPhoto.id, true, fast = true)) lastAlarmFocus = alarmPhoto.id
         }
         if (addedReady) {
             addedFocus?.let { request ->
@@ -1187,8 +1198,25 @@ private fun PhotoPairCard(
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
     val active = nextPhotoId != null && (pair.inPhoto?.id == nextPhotoId || pair.outPhoto?.id == nextPhotoId)
     val cardColor by animateColorAsState(pairPastel(pair.index, active, pair.fullyDownloaded, neutralColor), tween(durationMillis = if (neutralColor) 180 else 480, easing = FastOutSlowInEasing), label = "pairColor")
-    MintCard(modifier = modifier, containerColor = cardColor, contentPadding = 12.dp,
-        accentBorder = if (cardElevation >= 16.dp) MintAccent else if (active && !neutralColor) MintAccent.copy(alpha = .65f) else null,
+    val pairHighlighted = !pair.fullyDownloaded && highlightPhotoId != null &&
+        (pair.inPhoto?.id == highlightPhotoId || pair.outPhoto?.id == highlightPhotoId)
+    val pulseColor = MintAccent
+    val pulseModifier = if (pairHighlighted) Modifier.drawWithCache {
+        val width = 3.dp.toPx()
+        val radius = 18.dp.toPx() - width / 2
+        onDrawWithContent {
+            drawContent()
+            drawRoundRect(
+                color = pulseColor,
+                topLeft = Offset(width / 2, width / 2),
+                size = Size((size.width - width).coerceAtLeast(0f), (size.height - width).coerceAtLeast(0f)),
+                cornerRadius = CornerRadius(radius),
+                style = Stroke(width = width)
+            )
+        }
+    }.semantics { contentDescription = "กำลังเน้นคู่ภาพ ${pair.index}" } else Modifier
+    MintCard(modifier = modifier.then(pulseModifier), containerColor = cardColor, contentPadding = 12.dp,
+        accentBorder = if (cardElevation >= 16.dp || pairHighlighted) MintAccent else if (active && !neutralColor) MintAccent.copy(alpha = .65f) else null,
         elevation = cardElevation) {
         Column(Modifier.fillMaxWidth()) {
             Row(
@@ -1217,8 +1245,8 @@ private fun PhotoPairCard(
                 }
                 Box(Modifier.weight(0.85f)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId, highlightPhotoId)
-                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId, highlightPhotoId)
+                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
+                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
                     }
                     if (!reorderMode && !pair.fullyDownloaded) {
                         ClayIconButton(
@@ -1258,14 +1286,12 @@ private fun PairPhoto(
     currentTime: Long,
     onPreview: (PhotoEntity) -> Unit,
     modifier: Modifier = Modifier,
-    nextPhotoId: Long? = null,
-    highlightPhotoId: Long? = null
+    nextPhotoId: Long? = null
 ) {
     val contextForImage = LocalContext.current
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
     val isNext = nextPhotoId != null && photo?.id == nextPhotoId
-    val highlighted = highlightPhotoId != null && photo?.id == highlightPhotoId && !downloaded
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
@@ -1274,9 +1300,7 @@ private fun PairPhoto(
                 .clip(MaterialTheme.shapes.small)
                 .background(MintSoft, MaterialTheme.shapes.small)
                 .then(
-                    if (highlighted) {
-                        Modifier.border(4.dp, MintAccent, MaterialTheme.shapes.small)
-                    } else if (due) {
+                    if (due) {
                         Modifier.border(2.dp, MintDanger, MaterialTheme.shapes.small)
                     } else if (isNext) {
                         Modifier.border(2.dp, MintAccent, MaterialTheme.shapes.small)
@@ -1294,7 +1318,6 @@ private fun PairPhoto(
             } else {
                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = MintMuted, modifier = Modifier.align(Alignment.Center).size(36.dp))
             }
-            if (highlighted) Box(Modifier.matchParentSize().background(MintAccent.copy(alpha = .20f)).border(4.dp, MintAccent, MaterialTheme.shapes.small).semantics { contentDescription = "กำลังเน้น $label" })
             if (downloaded) {
                 MintBadge(text = "✓ ดาวน์โหลดแล้ว", type = "downloaded", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
             }
