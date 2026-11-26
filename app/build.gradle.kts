@@ -12,8 +12,8 @@ android {
         applicationId = "com.phantom.ghostshift"
         minSdk = 26 // Android 8.0+ (Practical minimum, though target is 13+)
         targetSdk = 34
-        versionCode = 58
-        versionName = "1.57"
+        versionCode = 59
+        versionName = "1.58"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

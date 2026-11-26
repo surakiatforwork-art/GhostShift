@@ -123,6 +123,9 @@ fun MintBadge(
     modifier: Modifier = Modifier
 ) {
     val (bg, contentColor, border) = when (type) {
+        "downloaded" -> Triple(
+            if (LocalGhostDark.current) Color(0xFF3F444C) else Color(0xFFE2E3E6),
+            if (LocalGhostDark.current) Color(0xFFE2E3E6) else Color(0xFF454950), MintLine)
         "ok" -> Triple(MintOkBg, MintOkText, MintLine)
         "wait" -> Triple(MintWaitBg, MintWaitText, MintLine) // Warn colors
         "err" -> Triple(MintErrBg, MintErrText, MintLine)

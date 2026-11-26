@@ -65,6 +65,8 @@ data class MainUiState(
 enum class ExportStage { Loading, Success, Error }
 data class ExportProgress(val tag: String, val remark: String?, val stage: ExportStage)
 
+data class PendingFocusRequest(val photoId: Long, val sequence: Long)
+
 data class SharedPhotoInput(
     val uri: Uri,
     val remark: String?
@@ -87,6 +89,11 @@ class MainViewModel(
     private val isExportingNext = MutableStateFlow(false)
     private val importMutex = Mutex()
     private val shiftMutex = Mutex()
+    private var focusSequence = 0L
+    private val _pendingFocus = MutableStateFlow<PendingFocusRequest?>(null)
+    val pendingFocus: StateFlow<PendingFocusRequest?> = _pendingFocus
+    private fun focusAdded(id: Long?) { if (id != null && id > 0) _pendingFocus.value = PendingFocusRequest(id, ++focusSequence) }
+    fun acknowledgeFocus(request: PendingFocusRequest) { _pendingFocus.compareAndSet(request, null) }
     private val _exportProgress = MutableStateFlow<ExportProgress?>(null)
     val exportProgress: StateFlow<ExportProgress?> = _exportProgress
     fun dismissExportError() { if (_exportProgress.value?.stage == ExportStage.Error) { _exportProgress.value = null; isExportingNext.value = false } }
@@ -212,7 +219,12 @@ class MainViewModel(
                 }
                 .distinctUntilChanged()
                 .collect {
-                    manageAlarmSideEffect(coreState.value)
+                    shiftMutex.withLock {
+                        val latest = coreState.value
+                        val storedTimer = prefs.timerState.first()
+                        val settings = prefs.scheduleSettings.first()
+                        if (latest.scheduleSettings == settings && (!settings.timerEnabled || latest.timer == storedTimer)) manageAlarmSideEffect(latest)
+                    }
                 }
         }
     }
@@ -261,25 +273,24 @@ class MainViewModel(
     }
 
     fun startTimer910() {
-        viewModelScope.launch { startTimerNow() }
+        viewModelScope.launch { shiftMutex.withLock { startTimerNow() } }
     }
 
     fun setTimerEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            prefs.setTimerEnabled(enabled)
-            if (!enabled) {
-                alarmScheduler.stopTimerAlerts()
-                lastAlarmKey = null
+            shiftMutex.withLock {
+                prefs.setTimerEnabled(enabled)
+                if (!enabled) { alarmScheduler.stopTimerAlerts(); lastAlarmKey = null }
             }
         }
     }
 
     fun setTargetMinutes(minutes: Int) {
-        viewModelScope.launch { prefs.setTargetMinutes(minutes) }
+        viewModelScope.launch { shiftMutex.withLock { prefs.setTargetMinutes(minutes) } }
     }
 
     fun setFinishTime(at: Long?) {
-        viewModelScope.launch { prefs.setFinishOverride(at) }
+        viewModelScope.launch { shiftMutex.withLock { prefs.setFinishOverride(at) } }
     }
 
     fun resetTimer() {
@@ -295,10 +306,13 @@ class MainViewModel(
     fun deleteAll() {
         viewModelScope.launch {
             shiftMutex.withLock {
-                importMutex.withLock { repo.deleteAll() }
-                prefs.resetShift(clearNext = true)
-                alarmScheduler.stopTimerAlerts()
-                lastAlarmKey = null
+                importMutex.withLock {
+                    prefs.resetShift()
+                    alarmScheduler.stopTimerAlerts()
+                    lastAlarmKey = null
+                    _pendingFocus.value = null
+                    repo.deleteAll()
+                }
             }
         }
     }
@@ -312,22 +326,24 @@ class MainViewModel(
 
         viewModelScope.launch {
             importMutex.withLock {
-                for (uri in uris) addToNextSlot(uri, mirrorHorizontally)
+                var last: Long? = null
+                try { for (uri in uris) addToNextSlot(uri, mirrorHorizontally)?.let { last = it } }
+                finally { focusAdded(last) }
             }
         }
     }
 
-    private suspend fun addToNextSlot(uri: Uri, mirror: Boolean = false, remark: String? = null) {
+    private suspend fun addToNextSlot(uri: Uri, mirror: Boolean = false, remark: String? = null): Long? {
         val current = repo.allPhotosNowSorted()
         val tag = SlotManager.computeNextSlot(current.filter { it.filePath.isNotBlank() }.map { it.toSchedulePhoto() })
         val reserved = current.firstOrNull { it.tag == tag && it.filePath.isBlank() }
-        if (reserved != null) repo.replacePhotoFromUri(reserved.id, uri, mirror)
+        return if (reserved != null) repo.replacePhotoFromUri(reserved.id, uri, mirror)
         else repo.addPhotoFromUri(uri, tag, mirror, remark)
     }
 
     fun replacePhoto(id: Long, uri: Uri, mirrorHorizontally: Boolean = false) {
         viewModelScope.launch {
-            repo.replacePhotoFromUri(id, uri, mirrorHorizontally)
+            importMutex.withLock { focusAdded(repo.replacePhotoFromUri(id, uri, mirrorHorizontally)) }
         }
     }
 
@@ -363,7 +379,9 @@ class MainViewModel(
 
         viewModelScope.launch {
             importMutex.withLock {
-                for (input in inputs) addToNextSlot(input.uri, remark = input.remark)
+                var last: Long? = null
+                try { for (input in inputs) addToNextSlot(input.uri, remark = input.remark)?.let { last = it } }
+                finally { focusAdded(last) }
             }
         }
     }
@@ -383,7 +401,7 @@ class MainViewModel(
     }
 
     fun reservePair(remark: String) {
-        viewModelScope.launch { importMutex.withLock { repo.reservePair(remark) } }
+        viewModelScope.launch { importMutex.withLock { focusAdded(repo.reservePair(remark)) } }
     }
 
     fun exportNextPhoto(expectedId: Long, confirmedIn: Boolean = false) {
@@ -403,12 +421,9 @@ class MainViewModel(
                     val next = repo.allPhotosNowSorted().firstOrNull { !it.downloaded }
                     if (next == null || next.id != expectedId || next.filePath.isBlank() ||
                         (next.kind.name == "IN" && !confirmedIn)) return@withLock
-                    val currentTimer = prefs.timerState.first()
                     saved = repo.exportPhoto(next)
                     if (saved) {
-                        prefs.recordNext(System.currentTimeMillis())
-                        val settings = prefs.scheduleSettings.first()
-                        if (settings.timerEnabled && next.tag.equals("IN-1", ignoreCase = true) && settings.autoStartOnFirstDownload && !currentTimer.running) startTimerNow()
+                        prefs.recordSuccessfulNext(System.currentTimeMillis(), next.tag.equals("IN-1", ignoreCase = true))
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

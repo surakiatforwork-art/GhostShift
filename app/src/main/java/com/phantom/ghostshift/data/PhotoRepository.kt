@@ -48,7 +48,7 @@ class PhotoRepository(
 
     suspend fun getById(id: Long): PhotoEntity? = dao.getById(id)
 
-    suspend fun reservePair(remark: String) {
+    suspend fun reservePair(remark: String): Long? {
         val index = (dao.getAllSortedByIdxOnce().maxOfOrNull { it.idx } ?: 0) + 1
         dao.upsertPair(Kind.entries.map { kind ->
             PhotoEntity(tag = "${kind.name}-$index", kind = kind, idx = index,
@@ -56,6 +56,7 @@ class PhotoRepository(
                 editedAt = null, filePath = "", width = 0, height = 0,
                 remark = remark.trim().take(120).ifBlank { null })
         })
+        return dao.getAllSortedByIdxOnce().firstOrNull { it.idx == index && it.kind == Kind.IN }?.id
     }
 
     suspend fun savePairRemark(index: Int, remark: String) {
@@ -70,13 +71,13 @@ class PhotoRepository(
         tag: String,
         mirrorHorizontally: Boolean = false,
         remark: String? = null
-    ) {
-        processAndSave(uri, tag, mirrorHorizontally = mirrorHorizontally, remark = remark)
+    ): Long? {
+        return processAndSave(uri, tag, mirrorHorizontally = mirrorHorizontally, remark = remark)
     }
 
-    suspend fun replacePhotoFromUri(id: Long, uri: Uri, mirrorHorizontally: Boolean = false) {
-        val photo = dao.getById(id) ?: return
-        processAndSave(uri, photo.tag, replaceId = id, mirrorHorizontally = mirrorHorizontally)
+    suspend fun replacePhotoFromUri(id: Long, uri: Uri, mirrorHorizontally: Boolean = false): Long? {
+        val photo = dao.getById(id) ?: return null
+        return processAndSave(uri, photo.tag, replaceId = id, mirrorHorizontally = mirrorHorizontally)
     }
 
     private suspend fun processAndSave(
@@ -85,8 +86,8 @@ class PhotoRepository(
         replaceId: Long? = null,
         mirrorHorizontally: Boolean = false,
         remark: String? = null
-    ) {
-        withContext(Dispatchers.IO) {
+    ): Long? {
+        return withContext(Dispatchers.IO) {
             val normalizedRemark = remark?.trim()?.take(120)?.ifBlank { null }
             val (kind, idx) = tag.parseTag() ?: (Kind.IN to 0) // Should validation happen before? Yes.
             
@@ -113,7 +114,8 @@ class PhotoRepository(
                         remark = normalizedRemark ?: it.remark
                     )
                     dao.upsert(updated) // Update
-                }
+                    it.id
+                } ?: run { file.delete(); null }
             } else {
                 // Add
                 val entity = PhotoEntity(

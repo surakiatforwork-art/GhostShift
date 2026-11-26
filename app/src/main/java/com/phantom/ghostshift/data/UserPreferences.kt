@@ -54,6 +54,30 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
     val lastNextAt: Flow<Long?> = dataStore.data.map { it[Keys.LAST_NEXT_AT] }
 
     suspend fun recordNext(at: Long) { dataStore.edit { it[Keys.LAST_NEXT_AT] = at } }
+    suspend fun recordSuccessfulNext(at: Long, firstIn: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[Keys.LAST_NEXT_AT] = at
+            if (!firstIn || prefs[Keys.TIMER_ENABLED] != true) return@edit
+            val running = prefs[Keys.TIMER_RUNNING] == true
+            val start = prefs[Keys.TIMER_START_AT]
+            val target = prefs[Keys.TIMER_TARGET_AT]
+            val override = prefs[Keys.FINISH_OVERRIDE_AT]
+            val decision = com.phantom.ghostshift.domain.FirstDownloadTimer.resolve(
+                at, running, start, target, override, prefs[Keys.TARGET_MINUTES] ?: 550,
+                prefs[Keys.AUTO_START_FIRST_DOWNLOAD] ?: true
+            )
+            if (decision.clearExpiredOverride) prefs.remove(Keys.FINISH_OVERRIDE_AT)
+            if (decision.replaceTimer) {
+                prefs[Keys.TIMER_RUNNING] = decision.timer.running
+                prefs[Keys.TIMER_LOCKED] = false
+                if (decision.timer.startAt != null) prefs[Keys.TIMER_START_AT] = decision.timer.startAt else prefs.remove(Keys.TIMER_START_AT)
+                if (decision.timer.targetAt != null) prefs[Keys.TIMER_TARGET_AT] = decision.timer.targetAt else prefs.remove(Keys.TIMER_TARGET_AT)
+                prefs.remove(Keys.ALARM_DUE_AT)
+                prefs.remove(Keys.ALARM_NEXT_TAG)
+            }
+        }
+    }
+
     suspend fun clearLastNext() { dataStore.edit { it.remove(Keys.LAST_NEXT_AT) } }
 
     // The fixed finish is for the current shift only; it never changes the default duration.
@@ -72,7 +96,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun resetShift(clearNext: Boolean = false) {
+    suspend fun resetShift() {
         dataStore.edit { prefs ->
             prefs[Keys.TIMER_RUNNING] = false
             prefs[Keys.TIMER_LOCKED] = false
@@ -81,7 +105,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
             prefs.remove(Keys.FINISH_OVERRIDE_AT)
             prefs.remove(Keys.ALARM_DUE_AT)
             prefs.remove(Keys.ALARM_NEXT_TAG)
-            if (clearNext) prefs.remove(Keys.LAST_NEXT_AT)
+            prefs.remove(Keys.LAST_NEXT_AT)
         }
     }
 

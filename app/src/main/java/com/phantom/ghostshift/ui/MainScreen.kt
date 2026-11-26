@@ -93,6 +93,10 @@ private data class PhotoPair(val index: Int, val inPhoto: PhotoEntity?, val outP
 fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "system", onThemeModeChanged: (String) -> Unit = {}) {
     val state by viewModel.uiState.collectAsState()
     val progress by viewModel.exportProgress.collectAsState()
+    val addedFocus by viewModel.pendingFocus.collectAsState()
+    var requestedDownload by remember { mutableStateOf<Long?>(null) }
+    var highlightPhotoId by remember { mutableStateOf<Long?>(null) }
+    var pulseOn by remember { mutableStateOf(false) }
     progress?.let { ExportProgressDialog(it, viewModel::dismissExportError) }
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
     var reservePair by remember { mutableStateOf(false) }
@@ -177,6 +181,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     val visiblePendingPairs = if (reorderMode) reorderPairs else pendingPairs
 
     val latestPending by rememberUpdatedState(pendingPairs)
+    val latestState by rememberUpdatedState(state)
     fun resetDrag() {
         draggedPairId = null
         draggedOffsetY = 0f
@@ -340,13 +345,75 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         return
     }
 
+    // The pending section has a single header at index 0. Resolve by stable
+    // photo ID, not the mutable IN/OUT slot number or current scroll position.
+    suspend fun focusPending(id: Long, blink: Boolean): Boolean {
+        val pair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
+        val index = latestPending.indexOf(pair) + 1
+        val key = "pending-${pair.stableId}"
+        val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
+        val layout = listState.layoutInfo
+        if (visible == null || visible.offset < layout.viewportStartOffset || visible.offset + visible.size > layout.viewportEndOffset) {
+            listState.animateScrollToItem(index)
+        }
+        // Wait for placement after the lazy list has composed the target card.
+        withFrameNanos { }
+        if (latestPending.none { it.inPhoto?.id == id || it.outPhoto?.id == id }) return false
+        if (blink) {
+            highlightPhotoId = id
+            try {
+                repeat(2) { pulseOn = true; delay(180); pulseOn = false; delay(120) }
+            } finally { pulseOn = false; highlightPhotoId = null }
+        }
+        return true
+    }
+
+    val alarmPhoto = state.pendingPhotos.firstOrNull()?.takeIf {
+        state.scheduleSettings.timerEnabled && state.timer.running && state.gateOpen &&
+            state.schedule.nextTag == it.tag && state.schedule.nextAt?.let { due -> state.currentTime >= due } == true
+    }
+    // Only one focus per due photo; no repeated scroll on the 1s clock.
+    var lastAlarmFocus by remember { mutableStateOf<Long?>(null) }
+    val focusBlocked = reorderMode || confirmIn != null || reservePair || progress != null ||
+        previewPhoto != null || showEditDialog || editChoicePair != null || deleteChoicePair != null ||
+        confirmDeleteAll || confirmResetTimer || confirmDeletePendingPhoto != null || confirmDeletePendingPair != null || gateDialog
+    val addedReady = addedFocus?.photoId?.let { id -> pendingPairs.any { it.inPhoto?.id == id || it.outPhoto?.id == id } } == true
+    // Manual navigation must not restart when the clock ticks or a new import arrives.
+    LaunchedEffect(requestedDownload, focusBlocked) {
+        val manual = requestedDownload ?: return@LaunchedEffect
+        if (focusBlocked) { requestedDownload = null; return@LaunchedEffect }
+        try {
+            if (focusPending(manual, true)) {
+                val next = latestState.pendingPhotos.firstOrNull()
+                if (next?.id == manual && next.filePath.isNotBlank() && !latestState.isExportingNext) {
+                    if (next.kind.name == "IN") confirmIn = next
+                    else viewModel.exportNextPhoto(next.id)
+                    if (latestState.schedule.nextTag == next.tag &&
+                        latestState.schedule.nextAt?.let { latestState.currentTime >= it } == true) lastAlarmFocus = manual
+                }
+            }
+        } finally { requestedDownload = null }
+    }
+    LaunchedEffect(addedFocus, addedReady, alarmPhoto?.id, focusBlocked, requestedDownload) {
+        if (focusBlocked || requestedDownload != null) return@LaunchedEffect
+        if (alarmPhoto == null) lastAlarmFocus = null
+        if (alarmPhoto != null && lastAlarmFocus != alarmPhoto.id) {
+            if (focusPending(alarmPhoto.id, true)) lastAlarmFocus = alarmPhoto.id
+        }
+        if (addedReady) {
+            addedFocus?.let { request ->
+                if (focusPending(request.photoId, false)) viewModel.acknowledgeFocus(request)
+            }
+        }
+    }
+
     // Warn once per conflict episode, not on every clock tick or export.
     var overflowAcknowledged by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val overflow = state.schedule.overflowMs
     LaunchedEffect(overflow > 0L) {
         if (overflow <= 0L) overflowAcknowledged = false
     }
-    if (overflow > 0L && !overflowAcknowledged && progress == null && confirmIn == null && !reservePair) {
+    if (overflow > 0L && !overflowAcknowledged && progress == null && confirmIn == null && !reservePair && requestedDownload == null) {
         val finish = state.schedule.items.lastOrNull()?.planAt
         GhostDialog(
             onDismissRequest = { overflowAcknowledged = true },
@@ -457,12 +524,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
             StatusHeader(
-                state = state,
-                onDeleteAll = { confirmDeleteAll = true },
+                state = state.copy(isExportingNext = state.isExportingNext || requestedDownload != null || confirmIn != null),
+                onDeleteAll = { if (requestedDownload == null) confirmDeleteAll = true },
                 onDownloadNext = {
-                    state.pendingPhotos.firstOrNull()?.takeIf { it.filePath.isNotBlank() && !state.isExportingNext }?.let { photo ->
-                        if (photo.kind.name == "IN") confirmIn = photo
-                        else viewModel.exportNextPhoto(photo.id)
+                    if (requestedDownload == null && !focusBlocked) {
+                        requestedDownload = state.pendingPhotos.firstOrNull()?.takeIf { it.filePath.isNotBlank() && !state.isExportingNext }?.id
                     }
                 },
                 onSettings = { showSettings = true },
@@ -541,7 +607,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             }) {
         LazyColumn(
             state = listState,
-            userScrollEnabled = draggedPairId == null,
+            userScrollEnabled = draggedPairId == null && requestedDownload == null,
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(0.dp),
             contentPadding = PaddingValues(bottom = 76.dp)
@@ -590,6 +656,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     planAtByTag = state.schedule.planAtByTag,
                     currentTime = if (state.scheduleSettings.timerEnabled) state.currentTime else 0L,
                     nextPhotoId = state.pendingPhotos.firstOrNull()?.id,
+                    highlightPhotoId = if (pulseOn) highlightPhotoId else null,
                     onEdit = if (reorderMode) null else { { editChoicePair = pair } },
                     onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
                     onSwap = if (reorderMode) null else { { viewModel.swapPair(pair.index) } },
@@ -808,7 +875,7 @@ fun StatusHeader(
                 val ringSize = minOf((maxWidth - gap * 3) / 4 - 6.dp, timerHeight - 18.dp).coerceAtLeast(30.dp)
                 val intervalStartedAt = state.downloadedPhotos.maxOfOrNull { it.downloadedAt ?: Long.MIN_VALUE }
                     ?.takeIf { it != Long.MIN_VALUE } ?: state.timer.startAt
-                val elapsed = state.lastNextAt?.let { fmtDuration((state.currentTime - it).coerceAtLeast(0L)) } ?: "--:--:--"
+                val elapsed = state.lastNextAt?.takeIf { state.downloadedPhotos.isNotEmpty() }?.let { fmtDuration((state.currentTime - it).coerceAtLeast(0L)) } ?: "--:--:--"
                 val nextEnabled = !state.pendingPhotos.firstOrNull()?.filePath.isNullOrBlank() && !state.isExportingNext
                 if (!state.scheduleSettings.timerEnabled) {
                     Column(Modifier.fillMaxWidth().height(headerHeight), verticalArrangement = Arrangement.spacedBy(gap)) {
@@ -1089,7 +1156,8 @@ private fun PhotoPairCard(
     modifier: Modifier = Modifier,
     nextPhotoId: Long? = null,
     cardElevation: androidx.compose.ui.unit.Dp = 1.dp,
-    neutralColor: Boolean = false
+    neutralColor: Boolean = false,
+    highlightPhotoId: Long? = null
 ) {
     val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
@@ -1125,8 +1193,8 @@ private fun PhotoPairCard(
                 }
                 Box(Modifier.weight(0.85f)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
-                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId)
+                        PairPhoto("IN-${pair.index}", pair.inPhoto, planAtByTag[pair.inPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId, highlightPhotoId)
+                        PairPhoto("OUT-${pair.index}", pair.outPhoto, planAtByTag[pair.outPhoto?.tag], currentTime, onPreview, Modifier.weight(1f), nextPhotoId, highlightPhotoId)
                     }
                     if (!reorderMode && !pair.fullyDownloaded) {
                         ClayIconButton(
@@ -1166,12 +1234,14 @@ private fun PairPhoto(
     currentTime: Long,
     onPreview: (PhotoEntity) -> Unit,
     modifier: Modifier = Modifier,
-    nextPhotoId: Long? = null
+    nextPhotoId: Long? = null,
+    highlightPhotoId: Long? = null
 ) {
     val contextForImage = LocalContext.current
     val downloaded = photo?.downloadedAt != null
     val due = dueAt != null && currentTime >= dueAt && !downloaded
     val isNext = nextPhotoId != null && photo?.id == nextPhotoId
+    val highlighted = highlightPhotoId != null && photo?.id == highlightPhotoId && !downloaded
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(
             Modifier
@@ -1180,7 +1250,9 @@ private fun PairPhoto(
                 .clip(MaterialTheme.shapes.small)
                 .background(MintSoft, MaterialTheme.shapes.small)
                 .then(
-                    if (due) {
+                    if (highlighted) {
+                        Modifier.border(4.dp, MintAccent, MaterialTheme.shapes.small)
+                    } else if (due) {
                         Modifier.border(2.dp, MintDanger, MaterialTheme.shapes.small)
                     } else if (isNext) {
                         Modifier.border(2.dp, MintAccent, MaterialTheme.shapes.small)
@@ -1192,14 +1264,15 @@ private fun PairPhoto(
                 AsyncImage(
                     model = remember(photo.filePath) { ImageRequest.Builder(contextForImage).data("file://${photo.filePath}").crossfade(false).build() },
                     contentDescription = label,
-                    modifier = Modifier.fillMaxSize().alpha(if (downloaded) 0.68f else 1f),
+                    modifier = Modifier.fillMaxSize().alpha(if (downloaded) 0.32f else 1f),
                     contentScale = ContentScale.Crop
                 )
             } else {
                 Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = MintMuted, modifier = Modifier.align(Alignment.Center).size(36.dp))
             }
+            if (highlighted) Box(Modifier.matchParentSize().background(MintAccent.copy(alpha = .20f)).border(4.dp, MintAccent, MaterialTheme.shapes.small).semantics { contentDescription = "กำลังเน้น $label" })
             if (downloaded) {
-                MintBadge(text = "✓ ดาวน์โหลดแล้ว", type = "ok", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
+                MintBadge(text = "✓ ดาวน์โหลดแล้ว", type = "downloaded", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
             }
             if (isNext && !due && !downloaded) MintBadge("ถัดไป", "ok", Modifier.align(Alignment.TopStart).padding(4.dp))
             if (due) {
