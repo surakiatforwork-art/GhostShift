@@ -237,19 +237,43 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     val addedPulseExists = addedPulseRequest?.first?.let { id ->
         pendingPairs.any { it.inPhoto?.id == id || it.outPhoto?.id == id }
     } == true
-    LaunchedEffect(addedPulseRequest, addedPulseExists, autoScrolling, reorderMode) {
+    LaunchedEffect(addedPulseRequest, addedPulseExists, reorderMode) {
         val request = addedPulseRequest ?: return@LaunchedEffect
-        if (!addedPulseExists || autoScrolling || reorderMode) {
+        if (!addedPulseExists || reorderMode) {
             addedHighlightId = null
             addedPulseRequest = null
             return@LaunchedEffect
         }
+        // A transient scroll/layout state must delay the pulse, not discard it.
+        fun settledOffset(): Int? {
+            val pair = latestPending.firstOrNull {
+                it.inPhoto?.id == request.first || it.outPhoto?.id == request.first
+            } ?: return null
+            val layout = listState.layoutInfo
+            val item = layout.visibleItemsInfo.firstOrNull { it.key == "pending-${pair.stableId}" } ?: return null
+            return item.offset.takeIf {
+                AddedCardScrollTarget.canPulse(autoScrolling || listState.isScrollInProgress,
+                    item.offset, item.size, layout.viewportStartOffset, layout.viewportEndOffset)
+            }
+        }
         try {
-            repeat(2) { count ->
-                addedHighlightId = request.first
-                delay(280)
-                addedHighlightId = null
-                if (count == 0) delay(180)
+            val settled = withTimeoutOrNull(10000) {
+                while (true) {
+                    val offset = snapshotFlow { settledOffset() }.first { it != null }
+                    // Let a newly composed card finish placement and reach the display.
+                    repeat(3) { withFrameNanos { } }
+                    delay(160)
+                    if (settledOffset() == offset) break
+                }
+                true
+            } == true
+            if (settled) {
+                repeat(2) { count ->
+                    addedHighlightId = request.first
+                    delay(280)
+                    addedHighlightId = null
+                    if (count == 0) delay(180)
+                }
             }
         } finally {
             addedHighlightId = null
@@ -443,6 +467,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     suspend fun focusPending(id: Long, blink: Boolean, addedCard: Boolean = false): Boolean {
         val initialPair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
         val key = "pending-${initialPair.stableId}"
+        if (addedCard) addedPulseRequest = null
         autoScrolling = true
         try {
             if (addedCard) {
@@ -817,7 +842,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
 
             items(visiblePendingPairs, key = { "pending-${it.stableId}" }, contentType = { "pendingPair" }) { pair ->
                 val isDragged = draggedPairId == pair.stableId
-                val reorderModifier = if (!isDragged && !autoScrolling) Modifier.animateItemPlacement(tween(150)) else Modifier
+                // Do not reattach placement animation to the newly focused card
+                // until its highlight has finished.
+                val focusId = addedFocus?.photoId ?: addedPulseRequest?.first
+                val isAddTarget = focusId != null &&
+                    (pair.inPhoto?.id == focusId || pair.outPhoto?.id == focusId)
+                val reorderModifier = if (!isDragged && !autoScrolling && !isAddTarget)
+                    Modifier.animateItemPlacement(tween(150)) else Modifier
                 if (isDragged) {
                     GroupBody {
                         val recess = MintText.copy(alpha = .18f)

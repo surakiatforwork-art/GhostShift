@@ -17,6 +17,13 @@ internal object AddedCardScrollTarget {
         return center - target
     }
 
+    // Require meaningful on-screen exposure, independent of scroll direction.
+    fun canPulse(scrolling: Boolean, top: Int, size: Int, start: Int, end: Int): Boolean {
+        if (scrolling || size <= 0 || end <= start) return false
+        val visible = (minOf(top + size, end) - maxOf(top, start)).coerceAtLeast(0)
+        return visible >= minOf(size, end - start) * .5f
+    }
+
     fun tailPadding(viewport: Int, original: Int): Int =
         maxOf(original, (viewport.coerceAtLeast(0) * .60f).toInt())
 }

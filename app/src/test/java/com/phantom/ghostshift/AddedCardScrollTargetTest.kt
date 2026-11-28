@@ -25,6 +25,15 @@ class AddedCardScrollTargetTest {
         assertEquals(400f, AddedCardScrollTarget.distance(400, 900, 0, 1000), 0f)
         assertEquals(0f, AddedCardScrollTarget.distance(0, 900, 0, 1000, true), 0f)
     }
+    @Test fun pulseWaitsForScrollAndVisibleCardInEitherDirection() {
+        assertTrue(!AddedCardScrollTarget.canPulse(true, 300, 200, 0, 1000))
+        assertTrue(!AddedCardScrollTarget.canPulse(false, 950, 200, 0, 1000))
+        assertTrue(!AddedCardScrollTarget.canPulse(false, -150, 200, 0, 1000))
+        assertTrue(AddedCardScrollTarget.canPulse(false, 300, 200, 0, 1000))
+        assertTrue(AddedCardScrollTarget.canPulse(false, 800, 200, 0, 1000))
+        assertTrue(AddedCardScrollTarget.canPulse(false, 0, 200, 0, 1000))
+        assertTrue(!AddedCardScrollTarget.canPulse(false, 1000, 200, 0, 1000))
+    }
     @Test fun viewportOffsetAndSizeAreRespected() {
         assertEquals(260f, AddedCardScrollTarget.distance(660, 200, 100, 1100), 0f)
         assertEquals(0f, AddedCardScrollTarget.distance(200, 200, 100, 1100), 0f)
