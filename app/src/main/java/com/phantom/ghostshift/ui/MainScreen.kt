@@ -112,6 +112,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     var pulseOn by remember { mutableStateOf(false) }
     var pulseSequence by remember { mutableLongStateOf(0L) }
     var pulseRequest by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var addedPulseRequest by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var addedHighlightId by remember { mutableStateOf<Long?>(null) }
     progress?.let { ExportProgressDialog(it, viewModel::dismissExportError) }
     var confirmIn by remember { mutableStateOf<PhotoEntity?>(null) }
     var reservePair by remember { mutableStateOf(false) }
@@ -230,6 +232,29 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             pulseOn = false
             highlightPhotoId = null
         }
+    }
+    // Independent from Download Next: a newly added card need not be the next due photo.
+    val addedPulseExists = addedPulseRequest?.first?.let { id ->
+        pendingPairs.any { it.inPhoto?.id == id || it.outPhoto?.id == id }
+    } == true
+    LaunchedEffect(addedPulseRequest, addedPulseExists, autoScrolling, reorderMode) {
+        val request = addedPulseRequest ?: return@LaunchedEffect
+        if (!addedPulseExists || autoScrolling || reorderMode) {
+            addedHighlightId = null
+            addedPulseRequest = null
+            return@LaunchedEffect
+        }
+        try {
+            repeat(2) { count ->
+                addedHighlightId = request.first
+                delay(280)
+                addedHighlightId = null
+                if (count == 0) delay(180)
+            }
+        } finally {
+            addedHighlightId = null
+        }
+        if (addedPulseRequest == request) addedPulseRequest = null
     }
     val nextPairKey = pendingPairs.firstOrNull { it.inPhoto?.id == nextPhotoId || it.outPhoto?.id == nextPhotoId }?.let { "pending-${it.stableId}" }
     val nextVisible by remember(nextPhotoId, nextPairKey, listState) {
@@ -515,7 +540,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         if (latestPending.none { it.inPhoto?.id == id || it.outPhoto?.id == id }) return false
         val visible = listState.layoutInfo.visibleItemsInfo.any { it.key == key }
         if (!visible) return false
-        if (blink) {
+        if (addedCard) {
+            pulseSequence += 1
+            addedPulseRequest = id to pulseSequence
+        } else if (blink) {
             pulseSequence += 1
             pulseRequest = id to pulseSequence
         }
@@ -819,6 +847,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     currentTime = if (state.scheduleSettings.timerEnabled) state.currentTime else 0L,
                     nextPhotoId = state.pendingPhotos.firstOrNull()?.id,
                     highlightPhotoId = if (pulseOn) highlightPhotoId else null,
+                    addedCardHighlighted = addedHighlightId != null &&
+                        (pair.inPhoto?.id == addedHighlightId || pair.outPhoto?.id == addedHighlightId),
                     onNextThumbnailBounds = measureNext,
                     onEdit = if (reorderMode) null else { { editChoicePair = pair } },
                     onDelete = if (reorderMode) null else { { deleteChoicePair = pair } },
@@ -1362,14 +1392,15 @@ private fun PhotoPairCard(
     cardElevation: androidx.compose.ui.unit.Dp = 1.dp,
     neutralColor: Boolean = false,
     highlightPhotoId: Long? = null,
+    addedCardHighlighted: Boolean = false,
     onNextThumbnailBounds: ((Long, Float, Float) -> Unit)? = null
 ) {
     val canSwap = pair.inPhoto != null && pair.outPhoto != null &&
         pair.inPhoto.downloadedAt == null && pair.outPhoto.downloadedAt == null
     val active = nextPhotoId != null && (pair.inPhoto?.id == nextPhotoId || pair.outPhoto?.id == nextPhotoId)
     val cardColor by animateColorAsState(pairPastel(pair.index, active, pair.fullyDownloaded, neutralColor), tween(durationMillis = if (neutralColor) 180 else 480, easing = FastOutSlowInEasing), label = "pairColor")
-    val pairHighlighted = !pair.fullyDownloaded && highlightPhotoId != null &&
-        (pair.inPhoto?.id == highlightPhotoId || pair.outPhoto?.id == highlightPhotoId)
+    val pairHighlighted = !pair.fullyDownloaded && (addedCardHighlighted ||
+        (highlightPhotoId != null && (pair.inPhoto?.id == highlightPhotoId || pair.outPhoto?.id == highlightPhotoId)))
     val pulseColor = MintAccent
     val pulseModifier = if (pairHighlighted) Modifier.drawWithCache {
         val width = 3.dp.toPx()
