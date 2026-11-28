@@ -93,6 +93,7 @@ fun UpdateHost(content: @Composable () -> Unit) {
         content()
         if (state.prompt) GhostDialog(
             onDismissRequest = { state.prompt = false },
+            kind = DialogKind.Update,
             title = { Text("มีอัปเดต GhostShift") },
             text = { Text("เวอร์ชันใหม่ v" + state.release?.version + " พร้อมดาวน์โหลด คุณสามารถอัปเดตภายหลังได้ที่ Settings") },
             confirmButton = { GhostDialogButton(onClick = { state.download() }) { Text("อัปเดต") } },
@@ -100,14 +101,17 @@ fun UpdateHost(content: @Composable () -> Unit) {
         )
         if (state.downloading) GhostDialog(
             onDismissRequest = {},
+            kind = DialogKind.Loading,
+            properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
             title = { Text("กำลังดาวน์โหลดอัปเดต") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LinearProgressIndicator(progress = state.progress.coerceIn(0f, 1f), modifier = Modifier.fillMaxWidth())
                 Text("${(state.progress * 100).toInt()}%")
-            } }, confirmButton = {}
+            } }
         )
         if (state.ready != null && !awaitingPermission) GhostDialog(
             onDismissRequest = { state.installationRequested() },
+            kind = DialogKind.Success,
             title = { Text("พร้อมติดตั้ง") },
             text = { Text("Android จะขอให้ยืนยันการติดตั้ง หากยังไม่ได้ให้สิทธิ์ติดตั้งแอปที่ไม่รู้จัก ระบบจะเปิดหน้าตั้งค่าสิทธิ์ก่อน") },
             confirmButton = { GhostDialogButton(onClick = {

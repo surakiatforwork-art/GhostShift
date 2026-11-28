@@ -116,6 +116,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     confirmIn?.let { photo ->
         GhostDialog(
             onDismissRequest = { confirmIn = null },
+            kind = DialogKind.Download,
             title = { Text("ดาวน์โหลด ${photo.tag}?") },
             text = { Text(photo.remark ?: "พร้อมดาวน์โหลดภาพนี้แล้วหรือยัง?") },
             confirmButton = { GhostDialogButton(onClick = {
@@ -128,6 +129,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (reservePair) {
         GhostDialog(
             onDismissRequest = { reservePair = false },
+            kind = DialogKind.Edit,
             title = { Text("เพิ่มคู่ภาพ") },
             text = { OutlinedTextField(pairRemark, { pairRemark = it.take(120) }, label = { Text("ชื่อสาขาหรือหมายเหตุ (ไม่บังคับ)") }) },
             confirmButton = { GhostDialogButton(tone = UtilityTone.Aqua, onClick = {
@@ -523,6 +525,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         val finish = state.schedule.items.lastOrNull()?.planAt
         GhostDialog(
             onDismissRequest = { overflowAcknowledged = true },
+            kind = DialogKind.Warning,
             title = { Text("เวลาไม่พอสำหรับภาพที่เหลือ") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -575,6 +578,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (showEditDialog) {
         GhostDialog(
             onDismissRequest = { showEditDialog = false },
+            kind = DialogKind.Edit,
             title = { Text("เพิ่มภาพจาก") },
             text = { Text("ถ่ายภาพใหม่หรือเลือกจากแกลเลอรี่") },
             confirmButton = {
@@ -828,6 +832,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (confirmDeleteAll) {
         GhostDialog(
             onDismissRequest = { confirmDeleteAll = false },
+            kind = DialogKind.Delete,
             title = { Text("ลบข้อมูลทั้งหมด") },
             text = { Text("ภาพและข้อมูลทั้งหมดจะถูกลบ พร้อมหยุดจับเวลาและแจ้งเตือน") },
             containerColor = MintCardBg,
@@ -851,6 +856,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         val target = confirmDeletePendingPhoto!!
         GhostDialog(
             onDismissRequest = { confirmDeletePendingPhoto = null },
+            kind = DialogKind.Delete,
             title = { Text("ลบภาพ ${target.tag}") },
             text = { Text("ภาพนี้จะถูกลบ และระบบจะจัดลำดับภาพที่เหลือให้ใหม่") },
             containerColor = MintCardBg,
@@ -874,6 +880,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         val pair = confirmDeletePendingPair!!
         GhostDialog(
             onDismissRequest = { confirmDeletePendingPair = null },
+            kind = DialogKind.Delete,
             title = { Text("ลบทั้งคู่ IN-${pair.index} และ OUT-${pair.index}") },
             text = { Text("ภาพทั้งคู่จะถูกลบ และระบบจะจัดลำดับภาพที่เหลือให้ใหม่") },
             containerColor = MintCardBg,
@@ -896,6 +903,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (confirmResetTimer) {
         GhostDialog(
             onDismissRequest = { confirmResetTimer = false },
+            kind = DialogKind.Time,
             title = { Text("รีเซ็ตตัวจับเวลา") },
             text = { Text("หยุดจับเวลาและยกเลิกการแจ้งเตือนทั้งหมด") },
             containerColor = MintCardBg,
@@ -918,6 +926,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     if (gateDialog) {
         GhostDialog(
             onDismissRequest = { gateDialog = false },
+            kind = DialogKind.Time,
             title = { Text("เริ่มการแจ้งเตือน") },
             text = {
                 Text(
@@ -1494,6 +1503,7 @@ private fun PhotoChoiceDialog(
     var remark by remember(pair.index, pair.remark) { mutableStateOf(pair.remark.orEmpty()) }
     GhostDialog(
         onDismissRequest = onDismiss,
+        kind = if (onDeleteBoth != null) DialogKind.Delete else DialogKind.Edit,
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1508,7 +1518,8 @@ private fun PhotoChoiceDialog(
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     listOf("IN-${pair.index}" to pair.inPhoto, "OUT-${pair.index}" to pair.outPhoto).forEach { (label, photo) ->
-                        OutlinedButton(
+                        GhostDialogButton(
+                            tone = UtilityTone.Neutral,
                             onClick = {
                                 onRemarkSaved?.invoke(remark)
                                 photo?.let(onSelected)
@@ -1519,24 +1530,22 @@ private fun PhotoChoiceDialog(
                     }
                 }
                 if (onDeleteBoth != null) {
-                    Button(
+                    GhostDialogButton(
+                        tone = UtilityTone.Coral,
                         onClick = onDeleteBoth,
                         enabled = pair.inPhoto?.downloadedAt == null && pair.outPhoto?.downloadedAt == null &&
                             pair.inPhoto != null && pair.outPhoto != null,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MintDanger, contentColor = Color.White)
+                        modifier = Modifier.fillMaxWidth()
                     ) { Text("ลบทั้งคู่") }
                 }
             }
         },
-        confirmButton = {
-            if (onRemarkSaved != null) {
-                GhostDialogButton(onClick = {
-                    onRemarkSaved(remark)
-                    onDismiss()
-                }) { Text("บันทึกหมายเหตุ") }
-            }
-        },
+        confirmButton = if (onRemarkSaved != null) { {
+            GhostDialogButton(onClick = {
+                onRemarkSaved(remark)
+                onDismiss()
+            }) { Text("บันทึกหมายเหตุ") }
+        } } else null,
         dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = onDismiss) { Text("ยกเลิก") } }
     )
 }

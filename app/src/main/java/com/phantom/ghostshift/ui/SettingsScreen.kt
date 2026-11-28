@@ -400,6 +400,7 @@ fun SettingsScreen(
         val valid = h != null && m != null && h in 0..24 && m in 0..59 && h * 60 + m > 0
         GhostDialog(
             onDismissRequest = { targetStep = 0 },
+            kind = DialogKind.Time,
             title = { Text("กำหนดระยะเวลาทำงาน") },
             text = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -407,13 +408,14 @@ fun SettingsScreen(
                     OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit).take(2) }, label = { Text("นาที") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                 }
             },
-            confirmButton = { Button(enabled = valid, onClick = { proposed = h!! * 60 + m!!; targetStep = 2 }) { Text("ถัดไป") } },
+            confirmButton = { GhostDialogButton(enabled = valid, onClick = { proposed = h!! * 60 + m!!; targetStep = 2 }) { Text("ถัดไป") } },
             dismissButton = { GhostDialogButton(tone = UtilityTone.Neutral, onClick = { targetStep = 0 }) { Text("ยกเลิก") } }
         )
     }
     if (state.scheduleSettings.timerEnabled && targetStep == 2) {
         GhostDialog(
             onDismissRequest = { targetStep = 0 },
+            kind = DialogKind.Time,
             title = { Text("เผื่อเวลาอีก 10 นาทีไหม?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -423,10 +425,10 @@ fun SettingsScreen(
                 }
             },
             confirmButton = {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(onClick = { confirmTarget(10) }, modifier = Modifier.fillMaxWidth()) { Text("เพิ่ม 10 นาที") }
-                    OutlinedButton(onClick = { confirmTarget(0) }, modifier = Modifier.fillMaxWidth()) { Text("ไม่เพิ่มเวลา") }
-                    GhostDialogButton(onClick = { targetStep = 0 }, modifier = Modifier.fillMaxWidth()) { Text("ยกเลิก") }
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GhostDialogButton(onClick = { confirmTarget(10) }) { Text("เพิ่ม 10 นาที") }
+                    GhostDialogButton(onClick = { confirmTarget(0) }, tone = UtilityTone.Lavender) { Text("ไม่เพิ่มเวลา") }
+                    GhostDialogButton(onClick = { targetStep = 0 }, tone = UtilityTone.Neutral) { Text("ยกเลิก") }
                 }
             }
         )
@@ -434,14 +436,16 @@ fun SettingsScreen(
     if (state.scheduleSettings.timerEnabled && targetStep == 3) {
         GhostDialog(
             onDismissRequest = { targetStep = 0 },
+            kind = DialogKind.Success,
             title = { Text("บันทึกระยะเวลาแล้ว") },
             text = { Text(durationText(savedTarget) + "\n\nตัวอย่าง: หากเริ่มงานหรือเริ่มนับเวลา 08:00 น. คุณจะเลิกงานเวลา " + finishText(savedTarget) + " น.") },
-            confirmButton = { Button(onClick = { targetStep = 0 }) { Text("เรียบร้อย") } }
+            confirmButton = { GhostDialogButton(onClick = { targetStep = 0 }) { Text("เรียบร้อย") } }
         )
     }
     if (state.scheduleSettings.timerEnabled && showResetTimerConfirmation) {
         GhostDialog(
             onDismissRequest = { showResetTimerConfirmation = false },
+            kind = DialogKind.Time,
             title = { Text("รีเซ็ตเวลา?") },
             text = {
                 Text("หยุดจับเวลาและยกเลิกการแจ้งเตือน พร้อมล้างเวลาเลิกงานเฉพาะรอบนี้ ระยะเวลาเดิมยังอยู่")
