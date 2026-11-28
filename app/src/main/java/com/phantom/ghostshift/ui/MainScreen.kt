@@ -46,6 +46,9 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.updateTransition
 import com.phantom.ghostshift.domain.NextPhotoVisibility
+import com.phantom.ghostshift.domain.AddedCardScrollTarget
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.graphicsLayer
@@ -195,6 +198,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     val visiblePendingPairs = if (reorderMode) reorderPairs else pendingPairs
 
     val latestPending by rememberUpdatedState(pendingPairs)
+    val latestDownloadedCount by rememberUpdatedState(downloadedPairs.size)
+    // Keep any extra end space while the user is still at the focused card.
+    var addTailPaddingPx by remember { mutableIntStateOf(0) }
+    LaunchedEffect(pendingPairs.isEmpty()) {
+        if (pendingPairs.isEmpty()) addTailPaddingPx = 0
+    }
     val latestState by rememberUpdatedState(state)
     // Measure only the next thumbnail and the list viewport, not every card.
     var viewportBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
@@ -406,11 +415,37 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
     // photo ID, not the mutable IN/OUT slot number or current scroll position.
     // All automatic navigation uses the same gentle, frame-driven motion in
     // either direction. Unlike animateScrollToItem, distant items never teleport.
-    suspend fun focusPending(id: Long, blink: Boolean): Boolean {
+    suspend fun focusPending(id: Long, blink: Boolean, addedCard: Boolean = false): Boolean {
         val initialPair = latestPending.firstOrNull { it.inPhoto?.id == id || it.outPhoto?.id == id } ?: return false
         val key = "pending-${initialPair.stableId}"
         autoScrolling = true
         try {
+            if (addedCard) {
+                // Wait until Room's new item is actually measured by LazyColumn.
+                val ready = withTimeoutOrNull(2500) {
+                    snapshotFlow {
+                        val layout = listState.layoutInfo
+                        layout.totalItemsCount == 4 + latestPending.size + latestDownloadedCount &&
+                            layout.visibleItemsInfo.isNotEmpty() &&
+                            layout.viewportEndOffset > layout.viewportStartOffset
+                    }.first { it }
+                }
+                if (ready != true) return false
+                val layout = listState.layoutInfo
+                val viewport = layout.viewportEndOffset - layout.viewportStartOffset
+                // The final pending card needs room below it to reach the zone.
+                if (latestDownloadedCount == 0 && latestPending.lastOrNull()?.stableId == initialPair.stableId) {
+                    val wanted = AddedCardScrollTarget.tailPadding(viewport, layout.afterContentPadding)
+                    if (wanted > layout.afterContentPadding) {
+                        addTailPaddingPx = wanted
+                        if (withTimeoutOrNull(2500) {
+                            snapshotFlow { listState.layoutInfo.afterContentPadding >= wanted }.first { it }
+                        } != true) return false
+                    }
+                }
+                withFrameNanos { }
+            }
+            var centerRequested = false
             listState.scroll {
                 var lastFrame = withFrameNanos { it }
                 var velocity = 0f
@@ -436,7 +471,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                     val viewport = (layout.viewportEndOffset - layout.viewportStartOffset).toFloat()
                     if (viewport <= 0f || layout.visibleItemsInfo.isEmpty()) break
                     val item = layout.visibleItemsInfo.firstOrNull { it.key == key }
-                    val distance = if (item != null) {
+                    val distance = if (addedCard && item != null) {
+                        AddedCardScrollTarget.distance(item.offset, item.size,
+                            layout.viewportStartOffset, layout.viewportEndOffset, centerRequested)
+                            .also { if (kotlin.math.abs(it) > .5f) centerRequested = true }
+                    } else if (item != null) {
                         when {
                             item.size > viewport || item.offset < layout.viewportStartOffset ->
                                 (item.offset - layout.viewportStartOffset).toFloat()
@@ -444,9 +483,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
                                 (item.offset + item.size - layout.viewportEndOffset).toFloat()
                             else -> 0f
                         }
-                    } else if (pairIndex + 1 < listState.firstVisibleItemIndex) -viewport else viewport
+                    } else {
+                        if (addedCard) centerRequested = true
+                        if (pairIndex + 1 < listState.firstVisibleItemIndex) -viewport else viewport
+                    }
                     val remaining = kotlin.math.abs(distance)
                     if (remaining <= .5f) break
+                    if (addedCard && ((distance > 0 && !listState.canScrollForward) ||
+                            (distance < 0 && !listState.canScrollBackward))) break
                     val maxSpeed = viewport * 2.6f
                     // Preserve velocity when the target becomes visible. Brake according
                     // to remaining travel instead of switching abruptly to a new speed.
@@ -510,7 +554,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
         }
         if (addedReady) {
             addedFocus?.let { request ->
-                if (focusPending(request.photoId, false)) viewModel.acknowledgeFocus(request)
+                if (focusPending(request.photoId, false, addedCard = true)) viewModel.acknowledgeFocus(request)
             }
         }
     }
@@ -728,7 +772,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel(), themeMode: String = "syst
             userScrollEnabled = draggedPairId == null && requestedLocate == null,
             modifier = Modifier.fillMaxSize().onGloballyPositioned { viewportBounds = it.boundsInWindow() },
             verticalArrangement = Arrangement.spacedBy(0.dp),
-            contentPadding = PaddingValues(bottom = 76.dp)
+            contentPadding = PaddingValues(bottom = maxOf(76.dp, with(dragDensity) { addTailPaddingPx.toDp() }))
         ) {
             item {
                 SectionHeaderCard(
